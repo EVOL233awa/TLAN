@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="admin-session-cookie" content="tlan_admin">
+<title>TLAN 管理控制台 · 登录</title>
+<script>
+(function () {
+  try {
+    var theme = localStorage.getItem('tlan_admin_theme');
+    if (theme === 'light' || theme === 'dark') {
+      document.documentElement.setAttribute('data-theme', theme);
+    }
+  } catch (error) {}
+})();
+</script>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0b1220;
+  --surface: #111b2c;
+  --surface-2: #162338;
+  --surface-3: #1b2b44;
+  --line: rgba(148, 180, 220, .18);
+  --line-strong: rgba(148, 180, 220, .32);
+  --text: #e7eef9;
+  --muted: #9fb0c7;
+  --faint: #7f93ad;
+  --accent: #4f8cff;
+  --accent-strong: #8bb6ff;
+  --accent-ink: #07111f;
+  --amber: #fbbf24;
+  --danger: #fb7185;
+  --danger-soft: rgba(251, 113, 133, .12);
+  --radius: 14px;
+  --shadow: 0 24px 80px rgba(0, 0, 0, .38);
+  --font-sans: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body {
+  color: var(--text);
+  background:
+    radial-gradient(900px 620px at 12% -12%, rgba(50, 211, 168, .10), transparent 58%),
+    radial-gradient(760px 520px at 100% 0%, rgba(90, 130, 255, .07), transparent 52%),
+    var(--bg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+button, input { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: wait; opacity: .62; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.login-shell { min-height: 100vh; display: grid; place-items: center; padding: 32px 20px; }
+.login-card {
+  position: relative;
+  width: min(440px, 100%);
+  overflow: hidden;
+  padding: 40px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(17, 27, 44, .96), rgba(11, 18, 32, .97));
+  box-shadow: var(--shadow);
+}
+.login-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: .72;
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-mark {
+  width: 32px; height: 32px; display: grid; place-items: center;
+  border-radius: 9px; background: var(--accent); color: var(--accent-ink);
+  font-weight: 800; letter-spacing: -.05em;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .14);
+}
+.brand-word { font-family: var(--font-mono); font-size: 13px; font-weight: 600; letter-spacing: .12em; }
+.brand-word span { color: var(--faint); font-weight: 400; }
+.eyebrow {
+  margin-top: 34px; color: var(--accent); font-family: var(--font-mono);
+  font-size: 10px; letter-spacing: .18em;
+}
+h1 { margin: 9px 0 0; font-size: 34px; line-height: 1.06; letter-spacing: -.05em; font-weight: 700; }
+.lede { margin: 14px 0 0; color: var(--muted); font-size: 13px; line-height: 1.75; }
+form { margin-top: 26px; }
+label { display: block; margin-bottom: 8px; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .04em; }
+.input-wrap { position: relative; }
+input {
+  width: 100%; border: 1px solid var(--line-strong); border-radius: 10px;
+  background: #0b1422; color: var(--text); padding: 13px 74px 13px 14px;
+  font-family: var(--font-mono); font-size: 14px; letter-spacing: .04em;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+input::placeholder { color: var(--faint); font-family: var(--font-sans); letter-spacing: 0; }
+input:focus { border-color: #8db4f8; box-shadow: 0 0 0 3px rgba(37, 99, 235, .10); outline: none; }
+.ghost-icon {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  border: 1px solid transparent; border-radius: 7px; background: transparent;
+  color: var(--muted); padding: 6px 9px; font-size: 11px;
+}
+.ghost-icon:hover { color: var(--text); background: rgba(255, 255, 255, .05); }
+.primary-button {
+  width: 100%; margin-top: 14px; display: flex; align-items: center; justify-content: space-between;
+  border: 1px solid transparent; border-radius: 10px; padding: 12px 14px;
+  background: var(--accent); color: var(--accent-ink); font-size: 13px; font-weight: 700;
+  transition: transform .15s ease, background .15s ease;
+}
+.primary-button:hover { background: #7aabff; transform: translateY(-1px); }
+.form-error {
+  margin: 10px 0 0; padding: 9px 11px; border: 1px solid rgba(251, 113, 133, .3);
+  border-radius: 8px; background: var(--danger-soft); color: #fecdd3; font-size: 12px; line-height: 1.5;
+}
+.login-notes {
+  display: grid; gap: 8px; margin-top: 26px; padding-top: 18px;
+  border-top: 1px solid var(--line); color: var(--faint); font-family: var(--font-mono);
+  font-size: 12px; letter-spacing: .03em;
+}
+.login-notes div { display: flex; align-items: center; gap: 8px; }
+.login-notes code { color: var(--muted); }
+.status-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 1px 2px rgba(22, 163, 74, .25); }
+.login-foot { margin: 18px 0 0; color: var(--faint); font-size: 12px; line-height: 1.6; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+@media (max-width: 520px) { .login-card { padding: 28px 22px; border-radius: 18px; } h1 { font-size: 29px; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* White-blue client theme: consistent with the Windows client sidebar. */:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f7fc;
+  --surface: #ffffff;
+  --surface-2: #f8fafd;
+  --surface-3: #eef5ff;
+  --line: #dbe5f0;
+  --line-strong: #c7d6e8;
+  --text: #132a46;
+  --muted: #526b84;
+  --faint: #5d7088;
+  --accent: #2563eb;
+  --accent-strong: #1d4ed8;
+  --accent-ink: #ffffff;
+  --amber: #b45309;
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
+  --shadow: 0 18px 45px rgba(0, 0, 0, .10);
+}html[data-theme="light"] body {
+  background:
+    radial-gradient(900px 620px at 10% -10%, rgba(37, 99, 235, .08), transparent 60%),
+    linear-gradient(180deg, #f7faff, #eef5fc);
+  color: var(--text);
+}html[data-theme="light"] ::selection { background: #cfe0ff; color: var(--text); }html[data-theme="light"] * { scrollbar-color: #b6c9df transparent; scrollbar-width: thin; }html[data-theme="light"] .brand-mark { background: var(--accent); color: #fff; box-shadow: 0 8px 18px rgba(0, 0, 0, .16); }html[data-theme="light"] .brand-word { color: var(--text); }html[data-theme="light"] .brand-word span { color: var(--faint); }html[data-theme="light"] .status-dot { background: #16a34a; box-shadow: 0 1px 2px rgba(22, 163, 74, .25); }html[data-theme="light"] .status-dot.warn { background: #d97706; box-shadow: 0 1px 2px rgba(217, 119, 6, .25); }html[data-theme="light"] .primary-button { background: var(--accent); color: #fff; box-shadow: 0 8px 18px rgba(0, 0, 0, .14); }html[data-theme="light"] .primary-button:hover { background: var(--accent-strong); }html[data-theme="light"] .secondary-button { background: #fff; border-color: var(--line); color: var(--text); }html[data-theme="light"] .secondary-button:hover { background: #f5f9ff; border-color: var(--line-strong); }html[data-theme="light"] .ghost-button { color: var(--muted); }html[data-theme="light"] .ghost-button:hover { background: #f1f6fd; color: var(--text); }html[data-theme="light"] .login-card { background: #fff; border-color: var(--line); box-shadow: var(--shadow); }html[data-theme="light"] .login-card::before { background: linear-gradient(90deg, transparent, var(--accent), transparent); }html[data-theme="light"] .login-card h1 { margin-top: 32px; color: var(--text); }html[data-theme="light"] .lede { color: var(--muted); }html[data-theme="light"] label, html[data-theme="light"] .dialog-label { color: var(--muted); }html[data-theme="light"] input, html[data-theme="light"] .dialog-input, html[data-theme="light"] .search-field input { background: #fff; border-color: var(--line-strong); color: var(--text); }html[data-theme="light"] input::placeholder, html[data-theme="light"] .dialog-input::placeholder, html[data-theme="light"] .search-field input::placeholder { color: var(--faint); }html[data-theme="light"] input:focus, html[data-theme="light"] .dialog-input:focus, html[data-theme="light"] .search-field input:focus { border-color: #8db4f8; box-shadow: 0 0 0 3px rgba(37, 99, 235, .10); }html[data-theme="light"] .ghost-icon { color: var(--muted); }html[data-theme="light"] .ghost-icon:hover { color: var(--text); background: #f1f6fd; }html[data-theme="light"] .login-notes { border-top-color: var(--line); color: var(--faint); }html[data-theme="light"] .login-notes code { color: var(--muted); }html[data-theme="light"] .login-foot { color: var(--faint); }html[data-theme="light"] .form-error { background: #fef2f2; color: #a61b1b; border-color: #f3c4c4; }html[data-theme="light"] .rail { background: rgba(255, 255, 255, .94); border-right-color: var(--line); backdrop-filter: blur(14px); }html[data-theme="light"] .nav-item:hover { background: #f1f6fd; color: var(--text); }html[data-theme="light"] .nav-item.is-active { background: #eaf2ff; border-color: #cfe0ff; color: var(--accent-strong); }html[data-theme="light"] .nav-index, html[data-theme="light"] .nav-icon { color: var(--faint); }html[data-theme="light"] .nav-item.is-active .nav-index, html[data-theme="light"] .nav-item.is-active .nav-icon { color: var(--accent); }html[data-theme="light"] .nav-icon { width: 18px; height: 18px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }html[data-theme="light"] .rail-footer { border-top-color: var(--line); }html[data-theme="light"] .system-state { color: var(--muted); }html[data-theme="light"] .rail-footer p { color: var(--faint); }html[data-theme="light"] .topbar h1 { margin-top: 0; color: var(--text); }html[data-theme="light"] .last-refresh { color: var(--faint); }html[data-theme="light"] .metric { background: #fff; border-color: var(--line); box-shadow: 0 8px 24px rgba(0, 0, 0, .05); }html[data-theme="light"] .metric::after { background: radial-gradient(circle, rgba(37, 99, 235, .08), transparent 70%); }html[data-theme="light"] .metric-label { color: var(--muted); }html[data-theme="light"] .metric strong { color: var(--text); }html[data-theme="light"] .metric-foot { color: var(--faint); }html[data-theme="light"] .card { background: #fff; border-color: var(--line); box-shadow: 0 8px 24px rgba(0, 0, 0, .05); }html[data-theme="light"] .card h3, html[data-theme="light"] h3 { color: var(--muted); }html[data-theme="light"] .detail-list dt { color: var(--faint); }html[data-theme="light"] .detail-list dd { color: var(--text); }html[data-theme="light"] .notice { border-color: #f2d49b; background: #fffaf0; }html[data-theme="light"] .notice strong { color: #8a5a00; }html[data-theme="light"] .notice p { color: #7d6438; }html[data-theme="light"] .notice.accent { border-color: #cfe0ff; background: #f4f8ff; }html[data-theme="light"] .notice.accent strong { color: var(--accent-strong); }html[data-theme="light"] .notice.accent p { color: #4b6482; }html[data-theme="light"] .search-field input { background: #fff; border-color: var(--line); color: var(--text); }html[data-theme="light"] .search-glyph { color: var(--faint); }html[data-theme="light"] .segmented { background: #fff; border-color: var(--line); }html[data-theme="light"] .segment { color: var(--muted); }html[data-theme="light"] .segment:hover { color: var(--text); }html[data-theme="light"] .segment.is-active { background: #eaf2ff; color: var(--accent-strong); box-shadow: none; }html[data-theme="light"] .member-summary { color: var(--faint); }html[data-theme="light"] .table-shell { background: #fff; border-color: var(--line); }html[data-theme="light"] th { background: #f4f8fd; color: #586b82; border-bottom-color: var(--line); }html[data-theme="light"] td { border-bottom-color: #edf2f8; color: var(--text); }html[data-theme="light"] tbody tr:hover { background: #f7fbff; }html[data-theme="light"] .avatar { background: #eaf2ff; border-color: #d5e4fb; color: var(--accent-strong); }html[data-theme="light"] .member-name { color: var(--text); }html[data-theme="light"] .member-id { color: var(--faint); }html[data-theme="light"] .ip { color: #24435f; }html[data-theme="light"] .muted { color: var(--muted); }html[data-theme="light"] .pill { background: #eef3f9; color: #586b82; }html[data-theme="light"] .pill-online { background: #e9f9f1; color: #087f5b; }html[data-theme="light"] .pill-warn { background: #fff6e5; color: #9a5b00; }html[data-theme="light"] .pill-danger { background: #fef2f2; color: #c02626; }html[data-theme="light"] .actions { gap: 5px; }html[data-theme="light"] .text-button { color: #5f7188; }html[data-theme="light"] .text-button:hover { background: #f1f6fd; border-color: var(--line); color: var(--text); }html[data-theme="light"] .text-button.danger { color: #c02626; }html[data-theme="light"] .text-button.danger:hover { background: #fef2f2; border-color: #f3c4c4; }html[data-theme="light"] .text-button.accent { color: var(--accent-strong); }html[data-theme="light"] .empty-state { color: var(--muted); }html[data-theme="light"] .empty-state strong { color: var(--text); }html[data-theme="light"] .table-footnote { color: var(--faint); }html[data-theme="light"] .alert { background: #fef2f2; color: #a61b1b; border-color: #f3c4c4; }html[data-theme="light"] dialog { background: #fff; border-color: var(--line-strong); }html[data-theme="light"] .dialog-close { color: var(--muted); }html[data-theme="light"] .dialog-close:hover { background: #f1f6fd; color: var(--text); }html[data-theme="light"] .dialog-error { color: #a61b1b; }html[data-theme="light"] .toast { background: #fff; border-color: var(--line-strong); color: var(--text); box-shadow: var(--shadow); }html[data-theme="light"] .toast.success { border-color: #bde8d4; }html[data-theme="light"] .toast.error { border-color: #f3c4c4; color: #a61b1b; }html[data-theme="light"] .state-strip { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }html[data-theme="light"] .state-strip .pill { padding: 6px 10px; }html[data-theme="light"] .insecure-banner { display: flex; flex-direction: column; gap: 3px; margin: 0 0 18px; padding: 12px 14px; border: 1px solid #f2c78a; border-radius: 10px; background: #fff4e5; color: #7a4a00; font-size: 12px; line-height: 1.55; }html[data-theme="light"] .insecure-banner strong { font-size: 12px; }html[data-theme="light"] .insecure-banner span { color: #7a5a22; }
+
+.nav-icon { width: 18px; height: 18px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.state-strip { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+.state-strip .pill { padding: 6px 10px; }
+.insecure-banner { display: flex; flex-direction: column; gap: 3px; margin: 0 0 18px; padding: 12px 14px; border: 1px solid #f2c78a; border-radius: 10px; background: #fff4e5; color: #7a4a00; font-size: 12px; line-height: 1.55; }
+.insecure-banner strong { font-size: 12px; }
+.insecure-banner span { color: #7a5a22; }
+.login-card h1 { margin-top: 32px; }
+.settings-trigger { display: inline-flex; align-items: center; gap: 7px; }
+.button-icon { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.settings-list { display: grid; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 15px 0; border-bottom: 1px solid var(--line); }
+.settings-row:last-child { border-bottom: 0; }
+.settings-label { color: var(--text); font-size: 13px; font-weight: 600; }
+.settings-note { margin-top: 4px; color: var(--faint); font-size: 11px; line-height: 1.5; }
+.settings-value { color: var(--text); font-family: var(--font-mono); font-size: 12px; white-space: nowrap; }
+.theme-switch { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-3); }
+.theme-option { border: 0; border-radius: 7px; background: transparent; color: var(--muted); padding: 7px 10px; font-size: 11px; font-weight: 600; }
+.theme-option:hover { color: var(--text); }
+.theme-option.is-active { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
+@media (max-width: 520px) {
+  .settings-row { align-items: flex-start; flex-direction: column; }
+  .theme-switch { width: 100%; }
+  .theme-option { flex: 1; }
+}
+@media (max-width: 760px) {
+  .table-shell table { min-width: 0; }
+  .table-shell thead { display: none; }
+  .table-shell tbody tr { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; padding: 14px; border-bottom: 1px solid var(--line); }
+  .table-shell tbody td { display: block; padding: 0; border: 0; }
+  .table-shell tbody td::before { content: attr(data-label); display: block; margin-bottom: 3px; color: var(--faint); font-size: 9px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+  .table-shell tbody td:first-child { grid-column: 1 / -1; }
+  .table-shell tbody td:last-child { grid-column: 1 / -1; }
+}
+
+html[data-theme="dark"] .status-dot { background: #34d399; }
+html[data-theme="dark"] .pill-online { background: rgba(52, 211, 153, .12); color: #34d399; }
+html[data-theme="dark"] .insecure-banner { background: rgba(251, 191, 36, .10); border-color: rgba(251, 191, 36, .28); color: #fde68a; }
+html[data-theme="dark"] .insecure-banner span { color: #d6c18a; }
+</style>
+</head>
+<body>
+<main class="login-shell">
+  <section class="login-card" aria-labelledby="login-title">
+__INSECURE_BANNER__
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">T</span>
+      <span class="brand-word">TLAN <span>/ OPS</span></span>
+    </div>
+    <h1 id="login-title">管理控制台</h1>
+    <p class="lede">使用管理令牌进入内网控制面。令牌只用于本次登录校验，不会写入 URL 或浏览器存储。</p>
+    <form id="login-form" novalidate>
+      <label for="admin-token">管理令牌</label>
+      <div class="input-wrap">
+        <input id="admin-token" name="token" type="password" autocomplete="current-password" spellcheck="false" placeholder="输入管理令牌" required autofocus>
+        <button type="button" id="toggle-token" class="ghost-icon" aria-label="显示管理令牌">显示</button>
+      </div>
+      <p id="login-error" class="form-error" role="alert" hidden></p>
+      <button id="login-submit" class="primary-button" type="submit">
+        <span>进入控制台</span><span aria-hidden="true">→</span>
+      </button>
+    </form>
+    <div class="login-notes" aria-label="安全管理信息">
+      <div><span class="status-dot" aria-hidden="true"></span>独立内网监听</div>
+      <div>会话 Cookie <code>tlan_admin</code></div>
+      <div>HttpOnly · SameSite=Strict</div>
+    </div>
+    <p class="login-foot">登录失败 5 次将锁定当前 IP 15 分钟。请通过 SSH 隧道、内网或 TLS 访问。</p>
+  </section>
+</main>
+<script>
+(function () {
+  'use strict';
+  var form = document.getElementById('login-form');
+  var input = document.getElementById('admin-token');
+  var button = document.getElementById('login-submit');
+  var error = document.getElementById('login-error');
+  var toggle = document.getElementById('toggle-token');
+
+  toggle.addEventListener('click', function () {
+    var visible = input.type === 'text';
+    input.type = visible ? 'password' : 'text';
+    toggle.textContent = visible ? '显示' : '隐藏';
+    toggle.setAttribute('aria-label', visible ? '显示管理令牌' : '隐藏管理令牌');
+    input.focus();
+  });
+
+  form.addEventListener('submit', async function (event) {
+    event.preventDefault();
+    error.hidden = true;
+    var token = input.value;
+    if (!token) {
+      error.textContent = '请输入管理令牌。';
+      error.hidden = false;
+      input.focus();
+      return;
+    }
+    button.disabled = true;
+    button.querySelector('span').textContent = '正在验证…';
+    try {
+      var response = await fetch('/admin/login', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: token })
+      });
+      if (response.ok) {
+        window.location.replace('/admin');
+        return;
+      }
+      if (response.status === 429) {
+        error.textContent = '尝试次数过多，请 15 分钟后再试。';
+      } else if (response.status === 401) {
+        error.textContent = '管理令牌无效，请重试。';
+      } else {
+        error.textContent = '登录暂时不可用，请稍后重试。';
+      }
+      error.hidden = false;
+      input.select();
+    } catch (err) {
+      error.textContent = '无法连接管理服务，请检查网络后重试。';
+      error.hidden = false;
+    } finally {
+      button.disabled = false;
+      button.querySelector('span').textContent = '进入控制台';
+    }
+  });
+})();
+</script>
+</body>
+</html>

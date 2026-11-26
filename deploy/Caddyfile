@@ -1,0 +1,17 @@
+# TLAN HTTPS reverse proxy configuration for Caddy.
+# Set TLAN_PUBLIC_HOST (or replace {$TLAN_PUBLIC_HOST} with your domain or IP).
+# For an IP address or internal hostname, Caddy's internal CA issues a TLS cert;
+# export /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt to clients,
+# or remove "tls internal" when using a public domain name for automatic Let's Encrypt.
+
+{$TLAN_PUBLIC_HOST:}:8443 {
+	tls internal
+	reverse_proxy 127.0.0.1:8080 {
+		flush_interval -1
+	}
+}
+
+{$TLAN_PUBLIC_HOST:}:8444 {
+	tls internal
+	reverse_proxy 127.0.0.1:8081
+}

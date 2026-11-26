@@ -1,0 +1,34 @@
+# Binaries and build artifacts
+tlan-server
+tlan
+tlan.exe
+client.exe
+lanmesh-client.exe
+lanmesh-server
+*.exe
+*.syso
+*.run
+*.run.sha256
+*.zip
+*.tar.gz
+
+# Generated config and state
+tlan-config.yml
+state.json
+data/
+
+# Output and temporary directories
+dist/
+tmp/
+output/
+.tmp-*
+.cache/
+.worktrees/
+.impeccable/
+%SystemDrive%/
+
+# Legacy local nested copy and scratch artifacts
+RadminLanPrivate/
+$null
+64
+r

@@ -1,0 +1,30 @@
+# TLAN WSS FRPS loopback template (Caddy terminates TLS on :8444 -> 127.0.0.1:7001)
+# Copy or customize /etc/tlan-frp/frps-wss.toml and /etc/tlan-frp/token.
+
+bindAddr = '127.0.0.1'
+bindPort = 7001
+vhostHTTPPort = 18082
+vhostHTTPSPort = 18444
+tcpmuxHTTPConnectPort = 18083
+subDomainHost = 'frp.example.com'
+
+auth.method = 'token'
+auth.tokenSource.type = 'file'
+auth.tokenSource.file.path = '/etc/tlan-frp/token'
+
+transport.tls.force = false
+transport.tcpMux = true
+
+allowPorts = [
+  { start = 60000, end = 61000 },
+]
+
+[[httpPlugins]]
+name = 'tlan-control'
+addr = '127.0.0.1:9093'
+path = '/api/v1/frp/plugin'
+ops = ['Login', 'NewProxy', 'Ping', 'NewUserConn']
+
+log.to = 'console'
+log.level = 'info'
+log.disablePrintColor = true

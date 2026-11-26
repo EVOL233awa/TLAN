@@ -1,0 +1,34 @@
+# TLAN primary FRPS template (TLS-only + KCP/QUIC)
+# Copy or customize /etc/tlan-frp/frps.toml and /etc/tlan-frp/token.
+
+bindAddr = '0.0.0.0'
+bindPort = 7000
+kcpBindPort = 7002
+quicBindPort = 7003
+vhostHTTPPort = 18080
+vhostHTTPSPort = 18443
+tcpmuxHTTPConnectPort = 18081
+subDomainHost = 'frp.example.com'
+
+auth.method = 'token'
+auth.tokenSource.type = 'file'
+auth.tokenSource.file.path = '/etc/tlan-frp/token'
+
+transport.tls.force = true
+transport.tls.certFile = '/etc/tlan-frp/server.crt'
+transport.tls.keyFile = '/etc/tlan-frp/server.key'
+transport.tcpMux = true
+
+allowPorts = [
+  { start = 60000, end = 61000 },
+]
+
+[[httpPlugins]]
+name = 'tlan-control'
+addr = '127.0.0.1:9093'
+path = '/api/v1/frp/plugin'
+ops = ['Login', 'NewProxy', 'Ping', 'NewUserConn']
+
+log.to = 'console'
+log.level = 'info'
+log.disablePrintColor = true

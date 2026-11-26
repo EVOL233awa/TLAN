@@ -1,0 +1,46 @@
+name: verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify Windows baseline and run Windows-only tests
+        shell: pwsh
+        run: ./scripts/verify-build-baseline.ps1 -IncludeWindowsTest
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test
+        env:
+          CGO_ENABLED: '0'
+        run: go test -mod=vendor ./... -count=1 -timeout 180s
+      - name: Vet
+        env:
+          CGO_ENABLED: '0'
+        run: go vet -mod=vendor ./...
+      - name: Check Linux installer syntax
+        run: bash -n install.sh && bash -n deploy/install-server.sh
+      - name: Build Linux executables
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          go build -mod=vendor -trimpath -o .tmp-build/tlan-server ./cmd/server
+          go build -mod=vendor -trimpath -o .tmp-build/tlan-install-helper ./cmd/install-helper
