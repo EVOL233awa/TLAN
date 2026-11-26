@@ -7,6 +7,12 @@ import (
 	"time"
 )
 
+const (
+	stunGlobalRatePerSecond = 4000
+	stunPerIPRatePerSecond  = 10
+	stunMaxTrackedIPs       = 4096
+)
+
 // ServeSTUN handles only IPv4 Binding. It never forwards arbitrary UDP.
 func ServeSTUN(ctx context.Context, socket *net.UDPConn) error {
 	go func() { <-ctx.Done(); socket.Close() }()
@@ -31,11 +37,12 @@ func ServeSTUN(ctx context.Context, socket *net.UDPConn) error {
 			total = 0
 		}
 		key := source.IP.String()
-		if total >= 200 || counts[key] >= 10 {
+		count, tracked := counts[key]
+		if total >= stunGlobalRatePerSecond || count >= stunPerIPRatePerSecond || (!tracked && len(counts) >= stunMaxTrackedIPs) {
 			continue
 		}
 		total++
-		counts[key]++
+		counts[key] = count + 1
 		ip := source.IP.To4()
 		if ip == nil {
 			continue

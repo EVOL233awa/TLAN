@@ -333,6 +333,7 @@ func frpAuthOptions(cfg config.Config) frpauth.Options {
 		},
 		AllowedPorts:   ports,
 		AllowedDomains: append([]string(nil), domains...),
+		SubDomainHost:  strings.TrimSpace(cfg.FRP.SubDomainHost),
 	}
 }
 

@@ -24,7 +24,7 @@ func acquireSingleInstanceNamed(mutexName, eventName string) (mutexHandle, activ
 
 	muxPtr := windows.StringToUTF16Ptr(mutexName)
 	mutexHandle, muxErr := windows.CreateMutex(nil, false, muxPtr)
-	if errors.Is(muxErr, windows.ERROR_ALREADY_EXISTS) {
+	if errors.Is(muxErr, windows.ERROR_ALREADY_EXISTS) || errors.Is(muxErr, windows.ERROR_ACCESS_DENIED) {
 		if mutexHandle != 0 {
 			_ = windows.CloseHandle(mutexHandle)
 			mutexHandle = 0

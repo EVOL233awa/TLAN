@@ -121,6 +121,14 @@ func (c *adminConsole) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			token = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		}
 		if !adminTokenMatches(token, c.apiToken) {
+			if token != "" {
+				if !c.auth.allowLogin(r) {
+					w.Header().Set("Retry-After", "900")
+					writeAdminFailure(w, http.StatusTooManyRequests, requestID, "TOO_MANY_ATTEMPTS", "尝试过于频繁")
+					return
+				}
+				c.auth.noteLoginFailure(r)
+			}
 			if _, _, ok := c.auth.authorize(r); !ok {
 				writeAdminFailure(w, http.StatusUnauthorized, requestID, "UNAUTHORIZED", "认证失败")
 				return

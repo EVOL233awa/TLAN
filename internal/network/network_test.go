@@ -65,16 +65,16 @@ func TestRelayRequiresBothAuthorizedEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrong := ticket
+	wrong := ticket.TicketFor(core.DeviceID("device-a"))
 	wrong.Secret = base64.RawURLEncoding.EncodeToString([]byte("wrong"))
 	if _, err := broker.Attach(wrong, core.DeviceID("device-a")); !errors.Is(err, ErrRelayUnauthorized) {
 		t.Fatalf("wrong ticket error = %v", err)
 	}
-	a, err := broker.Attach(ticket, core.DeviceID("device-a"))
+	a, err := broker.Attach(ticket.TicketFor(core.DeviceID("device-a")), core.DeviceID("device-a"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := broker.Attach(ticket, core.DeviceID("device-b"))
+	b, err := broker.Attach(ticket.TicketFor(core.DeviceID("device-b")), core.DeviceID("device-b"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestRelayLimitsAndIdleCleanup(t *testing.T) {
 	b.sessions[ticket.SessionID].lastActivity = time.Now().Add(-2 * time.Second)
 	b.mu.Unlock()
 	b.CleanupExpired()
-	if _, err := b.Attach(ticket, core.DeviceID("device-a")); !errors.Is(err, ErrRelayUnauthorized) {
+	if _, err := b.Attach(ticket.TicketFor(core.DeviceID("device-a")), core.DeviceID("device-a")); !errors.Is(err, ErrRelayUnauthorized) {
 		t.Fatalf("expired idle session attach error = %v", err)
 	}
 }
@@ -123,7 +123,7 @@ func TestRelayServerForwardsLengthPrefixedPackets(t *testing.T) {
 	go func() { _ = server.ServeConn(leftServer) }()
 	go func() { _ = server.ServeConn(rightServer) }()
 	writeHandshake := func(conn net.Conn, device core.DeviceID) {
-		request, _ := json.Marshal(RelayHandshake{Ticket: ticket, Device: device})
+		request, _ := json.Marshal(RelayHandshake{Ticket: ticket.TicketFor(device), Device: device})
 		_, _ = conn.Write(append(request, '\n'))
 		var response relayHandshakeResponse
 		if err := json.NewDecoder(bufio.NewReader(conn)).Decode(&response); err != nil || !response.OK {

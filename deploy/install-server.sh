@@ -6,15 +6,23 @@ umask 077
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export LC_ALL=C
 CHECK=0 REPLACE_CADDY=0 SKIP_FIREWALL=0
-for arg in "$@"; do
-    case "$arg" in
+PUBLIC_HOST="${TLAN_PUBLIC_HOST:-}"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
         --check) CHECK=1 ;;
         --replace-caddy) REPLACE_CADDY=1 ;;
         --skip-firewall) SKIP_FIREWALL=1 ;;
+        --host)
+            [[ $# -ge 2 ]] || { printf 'Missing value for --host\n' >&2; exit 1; }
+            PUBLIC_HOST="$2"
+            shift ;;
+        --host=*)
+            PUBLIC_HOST="${1#--host=}" ;;
         --help|-h)
             cat <<'HELP'
 TLAN Linux amd64 installer (CentOS 7.9 / Debian / Ubuntu)
 Usage: sudo bash TLAN-server-linux-amd64.run [OPTIONS]
+  --host HOST       Public IP or domain for Caddy HTTPS (or set TLAN_PUBLIC_HOST)
   --check           Validate prerequisites and configuration without installing
   --replace-caddy   Stop/disable an existing caddy.service (config/data retained)
   --skip-firewall   Leave host firewall rules to the administrator
@@ -25,8 +33,9 @@ Exit: 0 ready/check passed; 1 failed; 2 installed, certificate pending;
       3 installed, firewall needs attention.
 HELP
             exit 0 ;;
-        *) printf 'Unknown option: %s\n' "$arg" >&2; exit 1 ;;
+        *) printf 'Unknown option: %s\n' "$1" >&2; exit 1 ;;
     esac
+    shift
 done
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 log() { printf '\n==> %s\n' "$*"; }
@@ -102,6 +111,18 @@ printf '%s  %s\n' '@PAYLOAD_SHA256@' "$WORK/payload.tar.gz" | sha256sum -c - >/d
 tar -xzf "$WORK/payload.tar.gz" -C "$WORK" --no-same-owner
 chmod 755 "$WORK/install-helper" "$WORK/tlan-server" "$WORK/caddy"
 "$WORK/install-helper" verify-elf "$WORK/tlan-server" "$WORK/caddy" "$WORK/install-helper"
+if [[ -z $PUBLIC_HOST ]] && command -v ip >/dev/null 2>&1; then
+    PUBLIC_HOST=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "src") { print $(i+1); exit }}' || true)
+fi
+if [[ -z $PUBLIC_HOST ]] && command -v hostname >/dev/null 2>&1; then
+    PUBLIC_HOST=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+fi
+if [[ -z $PUBLIC_HOST ]]; then
+    (( CHECK )) || die 'Specify --host <IP-or-domain> or set TLAN_PUBLIC_HOST so Caddy can issue a TLS certificate.'
+    PUBLIC_HOST='127.0.0.1'
+fi
+[[ $PUBLIC_HOST =~ ^[A-Za-z0-9._-]+$ ]] || die "Invalid --host value: $PUBLIC_HOST"
+sed -i "s|{\\\$TLAN_PUBLIC_HOST:}|${PUBLIC_HOST}|g" "$WORK/Caddyfile"
 "$WORK/caddy" validate --config "$WORK/Caddyfile" --adapter caddyfile
 # Refuse symlinks for all managed paths, including their ancestors.
 safe_path() {
@@ -225,11 +246,11 @@ elif command -v ufw >/dev/null && ufw status | grep -q '^Status: active'; then
 else
     printf 'No active firewalld/UFW detected; custom iptables/nftables rules are unchanged.\n'
 fi
-printf '\nInstalled: https://<your-server-host>:8443\nConfig (contains secrets): /var/lib/tlan/tlan-config.yml\nBackup: %s\n' "$BACKUP"
+printf '\nInstalled: https://%s:8443\nConfig (contains secrets): /var/lib/tlan/tlan-config.yml\nBackup: %s\n' "$PUBLIC_HOST" "$BACKUP"
 printf 'Share only network.join_code with clients. Never share security.admin_token.\n'
 log 'Waiting up to 45 seconds for a trusted IP certificate'
 HTTPS_OK=1
-"$WORK/install-helper" probe https 45 || HTTPS_OK=0
+"$WORK/install-helper" probe https 45 "$PUBLIC_HOST" || HTTPS_OK=0
 if (( ! FIREWALL_OK )); then
     printf 'INSTALLED; host firewall update failed. Check TCP 80/8443/8444 and UDP 3478.\n' >&2
     exit 3

@@ -2,7 +2,9 @@ package network
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
@@ -176,6 +178,14 @@ type RelayTicket struct {
 
 func (t RelayTicket) Valid(now time.Time) bool {
 	return t.SessionID != "" && t.Source != "" && t.Target != "" && t.Secret != "" && now.Before(t.ExpiresAt)
+}
+
+// TicketFor derives the capability handed to one endpoint. Each side gets a
+// distinct secret, so a ticket received by one endpoint cannot be replayed
+// with the other endpoint's device ID. The root secret stays on the server.
+func (t RelayTicket) TicketFor(device core.DeviceID) RelayTicket {
+	t.Secret = endpointSecret(t.Secret, device)
+	return t
 }
 
 type RelaySessionSummary struct {
@@ -358,11 +368,12 @@ func (b *RelayBroker) Attach(ticket RelayTicket, device core.DeviceID) (*RelayCo
 		return nil, ErrRelayExpired
 	}
 	if session.ticket.Source != ticket.Source || session.ticket.Target != ticket.Target ||
-		!secureEqual(session.ticket.Secret, ticket.Secret) || (device != ticket.Source && device != ticket.Target) {
+		(device != ticket.Source && device != ticket.Target) ||
+		!secureEqual(endpointSecret(session.ticket.Secret, device), ticket.Secret) {
 		return nil, ErrRelayUnauthorized
 	}
 	if oldConn, exists := session.peers[device]; exists {
-		oldConn.closeLocked()
+		oldConn.closeLockedReplaced()
 		delete(session.peers, device)
 	}
 	session.lastActivity = b.now()
@@ -579,11 +590,35 @@ func (c *RelayConnection) Close() error {
 }
 
 func (c *RelayConnection) closeLocked() {
+	c.closeLockedNotifyPeer(true)
+}
+
+// closeLockedReplaced closes a connection that is being replaced by the same
+// endpoint re-attaching. The peer must keep waiting because the session stays
+// alive; only a real disconnect propagates a close sentinel.
+func (c *RelayConnection) closeLockedReplaced() {
+	c.closeLockedNotifyPeer(false)
+}
+
+func (c *RelayConnection) closeLockedNotifyPeer(notifyPeer bool) {
 	c.once.Do(func() {
 		if c.session.peers[c.device] == c {
 			delete(c.session.peers, c.device)
 		}
 		close(c.done)
+		if !notifyPeer {
+			return
+		}
+		for id, peer := range c.session.peers {
+			if id == c.device {
+				continue
+			}
+			select {
+			case peer.inbox <- RelayMessage{From: c.device, To: peer.device}:
+			default:
+				peer.closeLockedReplaced()
+			}
+		}
 	})
 }
 
@@ -607,6 +642,13 @@ func secureEqual(left, right string) bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(left), []byte(right)) == 1
+}
+
+func endpointSecret(root string, device core.DeviceID) string {
+	mac := hmac.New(sha256.New, []byte(root))
+	mac.Write([]byte("lanmesh-relay-endpoint\x00"))
+	mac.Write([]byte(device))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 // RelayHandshake is the first line sent on a RelayServer connection. The

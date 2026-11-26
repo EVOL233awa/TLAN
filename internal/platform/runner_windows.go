@@ -6,12 +6,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 type SystemRunner struct{}
@@ -61,6 +62,10 @@ func cleanPowerShellOutput(data []byte) []byte {
 	return []byte(strings.Join(filtered, "\n") + "\n")
 }
 
-func systemPowerShell() string {
-	return filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+func systemPowerShell() (string, error) {
+	dir, err := windows.GetSystemDirectory()
+	if err != nil {
+		return "", fmt.Errorf("resolve system directory: %w", err)
+	}
+	return filepath.Join(dir, "WindowsPowerShell", "v1.0", "powershell.exe"), nil
 }

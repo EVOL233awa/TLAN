@@ -857,16 +857,49 @@ func (a *desktop) installSizeMoveHook() {
 		win.SetWindowLong(hwnd, win.GWL_STYLE, style|win.WS_CLIPCHILDREN)
 	}
 	if a.wndProcCB == 0 {
+		inMoveDrag := false
 		a.wndProcCB = windows.NewCallback(func(h win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 			switch msg {
+			case win.WM_NCLBUTTONDOWN:
+				if wParam == win.HTCAPTION {
+					inMoveDrag = true
+					a.inSizeMove.Store(true)
+					a.resizedDuringMove.Store(false)
+					var res uintptr
+					if prev := a.origWndProc; prev != 0 {
+						res = win.CallWindowProc(prev, h, msg, wParam, lParam)
+					} else {
+						res = win.DefWindowProc(h, msg, wParam, lParam)
+					}
+					inMoveDrag = false
+					if a.inSizeMove.Swap(false) {
+						a.ensureAnimLoop()
+						if a.resizedDuringMove.Swap(false) {
+							a.requestCleanRelayout()
+						}
+					}
+					return res
+				}
 			case win.WM_ENTERSIZEMOVE:
 				a.inSizeMove.Store(true)
 				a.resizedDuringMove.Store(false)
 			case win.WM_EXITSIZEMOVE:
+				inMoveDrag = false
 				a.inSizeMove.Store(false)
 				a.ensureAnimLoop()
 				if a.resizedDuringMove.Swap(false) {
 					a.requestCleanRelayout()
+				}
+			case win.WM_SIZING:
+				inMoveDrag = false
+			case win.WM_MOVING:
+				inMoveDrag = true
+				if a.inSizeMove.Load() {
+					return win.DefWindowProc(h, msg, wParam, lParam)
+				}
+			case win.WM_MOVE, win.WM_WINDOWPOSCHANGING, win.WM_WINDOWPOSCHANGED:
+				if a.inSizeMove.Load() && inMoveDrag {
+					return win.DefWindowProc(h, msg, wParam, lParam)
 				}
 			case win.WM_NCDESTROY:
 				if prev := a.origWndProc; prev != 0 {

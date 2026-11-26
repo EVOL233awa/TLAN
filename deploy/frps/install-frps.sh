@@ -41,6 +41,24 @@ if [[ ! -f "${BINARY}" ]]; then
   echo "安装包缺少可执行的 frps 二进制：${BINARY}" >&2
   exit 1
 fi
+if [[ ! -f "${SCRIPT_DIR}/manifest.json" ]]; then
+  echo "安装包缺少清单文件：${SCRIPT_DIR}/manifest.json" >&2
+  exit 1
+fi
+EXPECTED_SHA256="$(grep -oE '"sha256"[[:space:]]*:[[:space:]]*"[A-Fa-f0-9]{64}"' "${SCRIPT_DIR}/manifest.json" | head -n1 | sed -E 's/.*:"([A-Fa-f0-9]{64})"/\1/' | tr '[:upper:]' '[:lower:]')"
+if [[ -z "${EXPECTED_SHA256}" ]]; then
+  echo "清单缺少有效的 frps SHA-256 摘要：${SCRIPT_DIR}/manifest.json" >&2
+  exit 1
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL_SHA256="$(sha256sum "${BINARY}" | awk '{print tolower($1)}')"
+else
+  ACTUAL_SHA256="$(openssl dgst -sha256 "${BINARY}" | awk '{print tolower($NF)}')"
+fi
+if [[ "${ACTUAL_SHA256}" != "${EXPECTED_SHA256}" ]]; then
+  echo "frps 二进制 SHA-256 校验失败：实际 ${ACTUAL_SHA256}，期望 ${EXPECTED_SHA256}" >&2
+  exit 1
+fi
 
 if ! getent group tlan-frp >/dev/null 2>&1; then
   groupadd --system tlan-frp

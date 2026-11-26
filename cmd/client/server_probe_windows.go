@@ -245,7 +245,9 @@ func (a *desktop) startServerProbeLoop() {
 				return
 			}
 			a.serverProbe.Record(sample)
-			a.ui(a.refreshServerMetricsDisplay)
+			if !a.inSizeMove.Load() {
+				a.ui(a.refreshServerMetricsDisplay)
+			}
 		}
 
 		probeOnce()

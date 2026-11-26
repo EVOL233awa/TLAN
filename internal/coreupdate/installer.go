@@ -171,6 +171,19 @@ func (i *Installer) Install(ctx context.Context, manifestData []byte) (Result, e
 	if err != nil {
 		return result, err
 	}
+	lockPath, err := safeInternalPath(root, lockFileName)
+	if err != nil {
+		return result, err
+	}
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		if os.IsExist(err) {
+			return result, fmt.Errorf("coreupdate: update already in progress (%w)", ErrTargetChanged)
+		}
+		return result, fmt.Errorf("coreupdate: acquire update lock: %w", err)
+	}
+	_ = lockFile.Close()
+	defer func() { _ = os.Remove(lockPath) }()
 	if err := cleanupIncomplete(root); err != nil {
 		return result, err
 	}
@@ -205,6 +218,13 @@ func (i *Installer) Install(ctx context.Context, manifestData []byte) (Result, e
 	if oldStateExists {
 		if oldState.TargetName != i.targetName {
 			return result, fmt.Errorf("%w: managed target name changed", ErrStateCorrupt)
+		}
+		stateCmp, err := CompareVersions(manifest.Version, oldState.Version)
+		if err != nil {
+			return result, err
+		}
+		if stateCmp <= 0 {
+			return result, fmt.Errorf("%w: manifest %s <= installed %s", ErrVersionNotNewer, manifest.Version, oldState.Version)
 		}
 		if err := verifyFileHash(targetPath, oldState.SHA256, oldState.Size); err != nil {
 			return result, fmt.Errorf("coreupdate: current managed target failed verification: %w", err)
@@ -283,7 +303,7 @@ func (i *Installer) Install(ctx context.Context, manifestData []byte) (Result, e
 
 	fail := func(cause error) (Result, error) {
 		result.RolledBack = false
-		if rollbackErr := i.rollbackInstall(root, targetPath, statePath, backupPath, oldExists, oldStateExists, oldStateBytes); rollbackErr != nil {
+		if rollbackErr := i.rollbackInstall(root, targetPath, statePath, backupPath, oldExists, oldStateExists, oldState, oldStateBytes); rollbackErr != nil {
 			return result, errors.Join(cause, fmt.Errorf("rollback failed: %w", rollbackErr))
 		}
 		result.RolledBack = true

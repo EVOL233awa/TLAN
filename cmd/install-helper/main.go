@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"debug/elf"
 	"encoding/json"
 	"errors"
@@ -143,7 +145,7 @@ func checkPorts(cfg config.Config) error {
 			_ = c.Close()
 		}
 	}()
-	for _, addr := range []string{":80", ":8443", "127.0.0.1:2019", cfg.Server.Listen, cfg.Server.RelayListen} {
+	for _, addr := range []string{":80", ":8443", ":8444", "127.0.0.1:2019", cfg.Server.Listen, cfg.Server.RelayListen} {
 		if addr == "" {
 			continue
 		}
@@ -174,7 +176,21 @@ func probe(scheme string, timeout time.Duration, endpointHost string) error {
 	} else if scheme != "http" {
 		return errors.New("expected http or https")
 	}
+	var tlsCfg *tls.Config
+	if scheme == "https" {
+		const caddyRootCAPath = "/var/lib/tlan-caddy/.local/share/caddy/pki/authorities/local/root.crt"
+		if pemData, readErr := os.ReadFile(caddyRootCAPath); readErr == nil && len(pemData) > 0 {
+			pool, poolErr := x509.SystemCertPool()
+			if poolErr != nil || pool == nil {
+				pool = x509.NewCertPool()
+			}
+			if pool.AppendCertsFromPEM(pemData) {
+				tlsCfg = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+			}
+		}
+	}
 	transport := &http.Transport{
+		TLSClientConfig: tlsCfg,
 		// Test the local gateway with the public IP certificate identity. No SNI
 		// override, proxy environment, or disabled certificate verification.
 		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {

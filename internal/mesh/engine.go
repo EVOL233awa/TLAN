@@ -82,6 +82,8 @@ type Engine struct {
 	generationMu         sync.Mutex
 	generationDone       chan struct{}
 	generationClosed     bool
+	peerDone             map[string]chan struct{}
+	peerGen              map[string]uint64
 	closeErr             error
 	instanceID           string
 	ledger               platform.ResourceLedger
@@ -158,8 +160,10 @@ func Start(parent context.Context, options Options) (*Engine, error) {
 		options: options, ctx: ctx, cancel: cancel,
 		peers: make(map[string]clientapi.Device), dialing: make(map[string]bool), relayRetries: make(map[string]relayRetryState),
 		generation: 1, generationDone: make(chan struct{}),
+		peerDone: make(map[string]chan struct{}), peerGen: make(map[string]uint64),
 		instanceID: instanceID, ledger: ledger, cleaner: cleaner, recovery: recovery,
 	}
+	context.AfterFunc(ctx, e.closeGeneration)
 	meshMTU := normalizeMeshMTU(options.MTU)
 	e.plain = newTunnel(local, prefix, meshMTU)
 	e.quality = NewQualityHistory(DefaultQualityCapacity)
@@ -305,13 +309,50 @@ func (e *Engine) Close() error {
 	})
 	return e.closeErr
 }
-func (e *Engine) generationChannel() <-chan struct{} {
+func (e *Engine) currentLeaseState() (uint64, <-chan struct{}) {
 	e.generationMu.Lock()
 	defer e.generationMu.Unlock()
 	if e.generationDone == nil {
-		return e.ctx.Done()
+		return e.generation, e.ctx.Done()
 	}
-	return e.generationDone
+	return e.generation, e.generationDone
+}
+
+func (e *Engine) peerLeaseState(deviceID string) (uint64, <-chan struct{}) {
+	e.generationMu.Lock()
+	defer e.generationMu.Unlock()
+	gen := e.peerGen[deviceID]
+	if gen == 0 {
+		gen = e.generation
+	}
+	if e.generationDone == nil && e.peerDone[deviceID] == nil {
+		return gen, e.ctx.Done()
+	}
+	if e.generationClosed {
+		if ch, ok := e.peerDone[deviceID]; ok {
+			return gen, ch
+		}
+		if e.generationDone != nil {
+			return gen, e.generationDone
+		}
+		closed := make(chan struct{})
+		close(closed)
+		return gen, closed
+	}
+	if e.peerDone == nil {
+		e.peerDone = make(map[string]chan struct{})
+	}
+	ch, ok := e.peerDone[deviceID]
+	if !ok {
+		ch = make(chan struct{})
+		e.peerDone[deviceID] = ch
+	}
+	return gen, ch
+}
+
+func (e *Engine) generationChannel() <-chan struct{} {
+	_, ch := e.currentLeaseState()
+	return ch
 }
 
 func (e *Engine) advanceGeneration() {
@@ -323,6 +364,41 @@ func (e *Engine) advanceGeneration() {
 	close(e.generationDone)
 	e.generation++
 	e.generationDone = make(chan struct{})
+	for id, ch := range e.peerDone {
+		close(ch)
+		delete(e.peerDone, id)
+	}
+	for id := range e.peerGen {
+		delete(e.peerGen, id)
+	}
+}
+
+func (e *Engine) invalidatePeers(deviceIDs []string) {
+	e.generationMu.Lock()
+	defer e.generationMu.Unlock()
+	if e.generationClosed || len(deviceIDs) == 0 {
+		return
+	}
+	if e.peerGen == nil {
+		e.peerGen = make(map[string]uint64)
+	}
+	for _, id := range deviceIDs {
+		if id == "" {
+			continue
+		}
+		if ch, ok := e.peerDone[id]; ok {
+			close(ch)
+			delete(e.peerDone, id)
+		}
+		cur := e.peerGen[id]
+		if cur == 0 {
+			cur = e.generation
+		}
+		if cur == 0 {
+			cur = 1
+		}
+		e.peerGen[id] = cur + 1
+	}
 }
 
 func (e *Engine) closeGeneration() {
@@ -330,6 +406,10 @@ func (e *Engine) closeGeneration() {
 	defer e.generationMu.Unlock()
 	if !e.generationClosed && e.generationDone != nil {
 		close(e.generationDone)
+	}
+	for id, ch := range e.peerDone {
+		close(ch)
+		delete(e.peerDone, id)
 	}
 	e.generationClosed = true
 }

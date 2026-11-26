@@ -1,7 +1,7 @@
 param(
     [string]$ServerURL = '',
     [string]$STUNAddress = '',
-    [string]$Version = '1.2.0'
+    [string]$Version = '1.3.0'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -85,7 +85,7 @@ try {
     $env:GOOS = 'windows'
     $env:GOARCH = 'amd64'
     $env:CGO_ENABLED = '0'
-    go build -mod=vendor -ldflags $ldflags -o $exePath ./cmd/client
+    go build -mod=vendor -trimpath -ldflags $ldflags -o $exePath ./cmd/client
     if ($LASTEXITCODE -ne 0) {
         throw 'go build ./cmd/client failed'
     }
@@ -138,7 +138,7 @@ try {
     $env:GOARCH = 'amd64'
     $env:CGO_ENABLED = '0'
     Remove-Item -Force -ErrorAction SilentlyContinue $installerExe
-    go build -mod=vendor -tags installer_payload -ldflags '-H windowsgui -s -w' -o $installerExe ./cmd/installer
+    go build -mod=vendor -trimpath -tags installer_payload -ldflags '-H windowsgui -s -w' -o $installerExe ./cmd/installer
     if ($LASTEXITCODE -ne 0) {
         throw 'go build ./cmd/installer failed'
     }

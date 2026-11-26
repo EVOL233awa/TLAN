@@ -2653,6 +2653,10 @@ func (m *Manager) acquireLeaseWithSecrets(ctx context.Context, cfg Config, secre
 	if lease.ID == "" || lease.Credential == "" || !lease.ExpiresAt.After(time.Now()) {
 		return nil, codedError(CodeAuthRejected, "managed FRP lease response is incomplete or already expired")
 	}
+	if err = validateManagedCredential(lease.Credential); err != nil {
+		_ = m.releaseLease(ctx, &lease)
+		return nil, err
+	}
 	if err = m.validateLeaseGrant(cfg, &lease, secrets); err != nil {
 		_ = m.releaseLease(ctx, &lease)
 		return nil, err

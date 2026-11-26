@@ -94,27 +94,35 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUpgradeRequired, err.Error())
 		return
 	}
-	if !s.allowEnrollment(r) {
-		w.Header().Set("Retry-After", "60")
-		writeError(w, 429, "too many join attempts")
-		return
-	}
-	s.joinSlotsOnce.Do(func() { s.joinSlots = make(chan struct{}, 2) })
-	select {
-	case s.joinSlots <- struct{}{}:
-		defer func() { <-s.joinSlots }()
-	default:
-		writeError(w, 429, "too many join attempts")
+	if err := s.clientVersionAllowed(reportedVersion); err != nil {
+		writeError(w, http.StatusUpgradeRequired, err.Error())
 		return
 	}
 	var req struct {
 		Code   string                     `json:"code"`
 		Device core.RegisterDeviceRequest `json:"device"`
 	}
-	if !decodeJSON(w, r, &req) {
+	// Bound unauthenticated enrollment payload to 16 KiB before checking admin
+	// bypass so oversized requests cannot bypass rate-limiting.
+	if !decodeStrictJSONLimit(w, r, &req, 16<<10) {
 		return
 	}
 	admin := s.adminTokenMatches(req.Code)
+	if !admin {
+		if !s.allowEnrollment(r) {
+			w.Header().Set("Retry-After", "60")
+			writeError(w, 429, "too many join attempts")
+			return
+		}
+		s.joinSlotsOnce.Do(func() { s.joinSlots = make(chan struct{}, 2) })
+		select {
+		case s.joinSlots <- struct{}{}:
+			defer func() { <-s.joinSlots }()
+		default:
+			writeError(w, 429, "too many join attempts")
+			return
+		}
+	}
 	if s.DisableEnrollment && !admin {
 		writeError(w, 503, "private enrollment is disabled")
 		return
@@ -122,6 +130,14 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	if err := req.Device.Validate(); err != nil {
 		writeError(w, 400, err.Error())
 		return
+	}
+	if !admin && s.Store.HasActivePrivateMemberCredential(req.Device.DeviceID) {
+		memberToken := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		cred, ok := s.Store.AuthenticateMember(memberToken)
+		if !ok || cred.DeviceID != req.Device.DeviceID.String() {
+			writeError(w, http.StatusConflict, "device is already enrolled; authenticate with the existing member token or an admin token to re-enroll")
+			return
+		}
 	}
 	if _, err := enrollment.Seal(req.Device.WireGuardPublicKey, nil); err != nil {
 		writeError(w, 400, "invalid device key")

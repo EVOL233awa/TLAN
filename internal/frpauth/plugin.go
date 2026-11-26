@@ -2,6 +2,7 @@ package frpauth
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 const (
 	PluginPath         = "/api/v1/frp/plugin"
 	PluginAPIVersion   = "0.1.0"
+	PluginTokenHeader  = "X-TLAN-Plugin-Token"
 	metadataLease      = "tlan_lease"
 	metadataCapability = "tlan_capability"
 	metadataServer     = "tlan_server"
@@ -104,6 +106,14 @@ type newUserConnContent struct {
 // NewPluginHandler returns the fail-closed HTTP adapter used by FRPS's
 // httpPlugins configuration. It should be bound to a loopback listener only.
 func NewPluginHandler(store *Store) http.Handler {
+	return NewPluginHandlerWithToken(store, "")
+}
+
+// NewPluginHandlerWithToken returns the fail-closed FRPS plugin handler and,
+// when token is non-empty, requires callers to present the matching secret in
+// the X-TLAN-Plugin-Token header.
+func NewPluginHandlerWithToken(store *Store, token string) http.Handler {
+	expectedToken := strings.TrimSpace(token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != PluginPath {
 			http.NotFound(w, r)
@@ -113,6 +123,13 @@ func NewPluginHandler(store *Store) http.Handler {
 			w.Header().Set("Allow", http.MethodPost)
 			writePluginReject(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
+		}
+		if expectedToken != "" {
+			presented := strings.TrimSpace(r.Header.Get(PluginTokenHeader))
+			if subtle.ConstantTimeCompare([]byte(presented), []byte(expectedToken)) != 1 {
+				writePluginReject(w, http.StatusUnauthorized, "FRP_AUTH_REJECTED: unauthorized plugin caller")
+				return
+			}
 		}
 		if store == nil {
 			writePluginReject(w, http.StatusOK, "FRP_AUTH_REJECTED: managed authorization is unavailable")

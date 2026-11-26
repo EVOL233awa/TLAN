@@ -44,8 +44,9 @@ type Server struct {
 	FRP              *frpauth.Store
 	FRPBootstrap     func() (FRPBootstrapConfig, error)
 	relayMu          sync.Mutex
-	relaySlotsOnce   sync.Once
-	relaySlots       chan struct{}
+	relayStreamMu    sync.Mutex
+	relayStreamTotal int
+	relayStreams     map[core.DeviceID]int
 	relayPairs       map[string]network.RelayTicket
 }
 
@@ -104,10 +105,12 @@ func (s *Server) auth(next http.Handler) http.Handler {
 			return
 		}
 		token := r.Header.Get("X-Admin-Token")
+		explicitAdminHeader := token != ""
 		if token == "" {
 			token = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		}
-		if isAdminAPIPath(r.URL.Path) {
+		adminAttempt := isAdminAPIPath(r.URL.Path) || explicitAdminHeader || (token != "" && !strings.HasPrefix(token, "member_"))
+		if adminAttempt {
 			ip := adminClientIP(r)
 			if s.adminTokenMatches(token) {
 				s.resetPublicAdminFailures(ip)
@@ -214,6 +217,10 @@ func (s *Server) relaySessions(w http.ResponseWriter, r *http.Request) {
 	if req.TTLSeconds > 0 {
 		ttl = time.Duration(req.TTLSeconds) * time.Second
 	}
+	callerDevice := source
+	if credential, ok := memberIdentity(r); ok {
+		callerDevice = core.DeviceID(credential.DeviceID)
+	}
 	s.relayMu.Lock()
 	defer s.relayMu.Unlock()
 	if s.relayPairs == nil {
@@ -230,7 +237,7 @@ func (s *Server) relaySessions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if ticket, ok := s.relayPairs[pairKey]; ok {
-		writeJSON(w, http.StatusCreated, ticket)
+		writeJSON(w, http.StatusCreated, ticket.TicketFor(callerDevice))
 		return
 	}
 	ticket, err := s.Relay.CreateSession(source, target, ttl)
@@ -243,7 +250,7 @@ func (s *Server) relaySessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.relayPairs[pairKey] = ticket
-	writeJSON(w, http.StatusCreated, ticket)
+	writeJSON(w, http.StatusCreated, ticket.TicketFor(callerDevice))
 }
 
 func (s *Server) networks(w http.ResponseWriter, r *http.Request) {
@@ -453,13 +460,26 @@ func (s *Server) networkDevice(w http.ResponseWriter, r *http.Request, networkID
 			if !decodeJSON(w, r, &req) {
 				return
 			}
+			if len(req.Candidates) > 256 {
+				writeError(w, http.StatusBadRequest, "too many candidates")
+				return
+			}
 			candidates := req.Candidates[:0]
+			invalid := 0
+			var firstAddress string
+			var firstErr error
 			for _, candidate := range req.Candidates {
 				if err := candidate.Validate(); err != nil {
-					slog.Warn("discarding invalid candidate", "network", nid.String(), "device", did.String(), "address", candidate.Address, "error", err)
+					invalid++
+					if firstErr == nil {
+						firstAddress, firstErr = candidate.Address, err
+					}
 					continue
 				}
 				candidates = append(candidates, candidate)
+			}
+			if invalid > 0 {
+				slog.Warn("discarding invalid candidates", "network", nid.String(), "device", did.String(), "count", invalid, "first_address", firstAddress, "first_error", firstErr)
 			}
 			record, err := s.Store.SetCandidates(nid, did, candidates)
 			if err != nil {

@@ -237,3 +237,27 @@ func TestPluginRejectsWrongFRPVersion(t *testing.T) {
 		t.Fatalf("response = %+v", response)
 	}
 }
+
+func TestPluginHandlerEnforcesOptionalToken(t *testing.T) {
+	fixture := newPluginFixture(t)
+	body, err := json.Marshal(map[string]any{"version": PluginAPIVersion, "op": "Login", "content": fixture.loginContent(fixture.metas)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewPluginHandlerWithToken(fixture.store, "shared-plugin-secret")
+
+	unauthReq := httptest.NewRequest(http.MethodPost, PluginPath+"?version="+PluginAPIVersion+"&op=Login", bytes.NewReader(body))
+	unauthRec := httptest.NewRecorder()
+	handler.ServeHTTP(unauthRec, unauthReq)
+	if unauthRec.Code != http.StatusUnauthorized {
+		t.Fatalf("missing token status = %d, want 401", unauthRec.Code)
+	}
+
+	authReq := httptest.NewRequest(http.MethodPost, PluginPath+"?version="+PluginAPIVersion+"&op=Login", bytes.NewReader(body))
+	authReq.Header.Set(PluginTokenHeader, "shared-plugin-secret")
+	authRec := httptest.NewRecorder()
+	handler.ServeHTTP(authRec, authReq)
+	if authRec.Code != http.StatusOK {
+		t.Fatalf("valid token status = %d, want 200 (%s)", authRec.Code, authRec.Body.String())
+	}
+}

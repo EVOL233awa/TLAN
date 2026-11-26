@@ -12,7 +12,7 @@ const (
 	//   - Major: breaking / major overhaul
 	//   - Minor: any server-side change (client & server Major.Minor must match)
 	//   - Patch: client-only updates under the same Major.Minor
-	CurrentVersion    = "1.2.0"
+	CurrentVersion    = "1.3.0"
 	CurrentVersionTag = "v" + CurrentVersion
 )
 

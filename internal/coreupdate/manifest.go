@@ -270,7 +270,7 @@ func VerifySignedManifest(data []byte, opts VerifyOptions) (Manifest, error) {
 			if _, err := parseVersion(allowed); err != nil {
 				return Manifest{}, fmt.Errorf("%w: invalid allowed version", ErrInvalidManifest)
 			}
-			if allowed == m.Version {
+			if strings.TrimPrefix(allowed, "v") == strings.TrimPrefix(m.Version, "v") {
 				found = true
 			}
 		}

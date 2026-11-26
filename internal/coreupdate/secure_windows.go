@@ -50,9 +50,16 @@ func setCurrentUserDACL(path string, directory bool) error {
 	if err != nil {
 		return fmt.Errorf("render current user SID: %w", err)
 	}
-	sddl := "D:P(A;;FA;;;" + sid + ")"
+	aceFlags := ""
 	if directory {
-		sddl = "D:P(A;OICI;FA;;;" + sid + ")"
+		aceFlags = "OICI"
+	}
+	sddl := fmt.Sprintf("D:P(A;%s;FA;;;%s)", aceFlags, sid)
+	if sid != "S-1-5-32-544" {
+		sddl += fmt.Sprintf("(A;%s;FA;;;BA)", aceFlags)
+	}
+	if sid != "S-1-5-18" {
+		sddl += fmt.Sprintf("(A;%s;FA;;;SY)", aceFlags)
 	}
 	sddlPtr, err := syscall.UTF16PtrFromString(sddl)
 	if err != nil {

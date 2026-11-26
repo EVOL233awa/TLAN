@@ -504,14 +504,6 @@ type ledgerFile struct {
 
 const ledgerVersion = 1
 
-func DefaultLedgerPath() (string, error) {
-	root, err := os.UserConfigDir()
-	if err != nil {
-		return "", fmt.Errorf("locate user config directory: %w", err)
-	}
-	return filepath.Join(root, "TLAN", "mesh-resources.json"), nil
-}
-
 func OpenDefaultLedger() (*FileLedger, error) {
 	path, err := DefaultLedgerPath()
 	if err != nil {

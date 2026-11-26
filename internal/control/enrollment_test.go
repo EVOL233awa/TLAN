@@ -117,12 +117,20 @@ func TestPrivatePasscodeMembershipAndPowerPermissions(t *testing.T) {
 		connection.Close()
 		t.Fatal("member impersonated relay endpoint")
 	}
+	ticketB, err := apis[1].CreateRelaySession(core.NetworkID(n.ID), identities[1].DeviceID, identities[0].DeviceID, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ticketB.SessionID != ticket.SessionID || ticketB.Secret == ticket.Secret {
+		t.Fatalf("expected the cached session with a distinct endpoint secret: %+v", ticketB)
+	}
+	relayTicketB := network.RelayTicket{SessionID: ticketB.SessionID, Source: ticketB.Source, Target: ticketB.Target, Secret: ticketB.Secret, ExpiresAt: ticketB.ExpiresAt}
 	c1, err := network.DialHTTPRelay(ctx, server.URL, apis[0].Token, relayTicket, identities[0].DeviceID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c1.Close()
-	c2, err := network.DialHTTPRelay(ctx, server.URL, apis[1].Token, relayTicket, identities[1].DeviceID)
+	c2, err := network.DialHTTPRelay(ctx, server.URL, apis[1].Token, relayTicketB, identities[1].DeviceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,5 +184,49 @@ func TestEnrollmentResponseDoesNotContainPlainCredentialAndLimitsAttempts(t *tes
 	}
 	if service.allowEnrollment(req) {
 		t.Fatal("join attempts were not bounded")
+	}
+}
+
+func TestMemberCannotReenrollActiveDeviceWithoutToken(t *testing.T) {
+	store, err := storage.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.EnsurePrivateNetwork("test", "passcode-test", "10.245.0.0/24"); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := clientidentity.LoadOrCreate(filepath.Join(t.TempDir(), "id.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &Server{Store: store, AdminToken: "admin"}
+	server := httptest.NewServer(service.Handler())
+	defer server.Close()
+
+	// Initial enrollment succeeds and yields a valid member credential.
+	resp, err := clientapi.New(server.URL, "").Enroll("passcode-test", identity.RegisterRequest(), identity.PrivateKey)
+	if err != nil {
+		t.Fatalf("initial enroll failed: %v", err)
+	}
+	memberToken := resp.Token
+
+	// Another client knowing only the shared join code must not hijack an active DeviceID without its token.
+	attackerBody, _ := json.Marshal(map[string]any{"code": "passcode-test", "device": identity.RegisterRequest()})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/enroll", bytes.NewReader(attackerBody))
+	req.RemoteAddr = "127.0.0.1:2000"
+	rec := httptest.NewRecorder()
+	service.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("unauthenticated re-enroll status = %d, want 409 (%s)", rec.Code, rec.Body.String())
+	}
+
+	// Re-enrolling the same DeviceID with its current member token succeeds.
+	reqAuth := httptest.NewRequest(http.MethodPost, "/api/v1/enroll", bytes.NewReader(attackerBody))
+	reqAuth.RemoteAddr = "127.0.0.1:2001"
+	reqAuth.Header.Set("Authorization", "Bearer "+memberToken)
+	recAuth := httptest.NewRecorder()
+	service.Handler().ServeHTTP(recAuth, reqAuth)
+	if recAuth.Code != http.StatusCreated {
+		t.Fatalf("authenticated re-enroll status = %d, want 201 (%s)", recAuth.Code, recAuth.Body.String())
 	}
 }

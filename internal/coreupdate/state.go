@@ -139,11 +139,17 @@ func (i *Installer) replaceState(root, statePath string, state diskState) error 
 	return i.writeStateBytes(root, statePath, data)
 }
 
-func (i *Installer) rollbackInstall(root, targetPath, statePath, backupPath string, oldTargetExists, oldStateExists bool, oldStateBytes []byte) error {
+func (i *Installer) rollbackInstall(root, targetPath, statePath, backupPath string, oldTargetExists, oldStateExists bool, oldState diskState, oldStateBytes []byte) error {
 	var errs []error
 	if oldTargetExists {
 		if backupPath == "" {
 			errs = append(errs, errors.New("old target exists but no rollback backup was created"))
+		} else if oldStateExists {
+			if err := verifyFileHash(backupPath, oldState.SHA256, oldState.Size); err != nil {
+				errs = append(errs, fmt.Errorf("verify rollback backup: %w", err))
+			} else if err := i.atomicReplace(backupPath, targetPath); err != nil {
+				errs = append(errs, fmt.Errorf("restore old target: %w", err))
+			}
 		} else if err := i.atomicReplace(backupPath, targetPath); err != nil {
 			errs = append(errs, fmt.Errorf("restore old target: %w", err))
 		}

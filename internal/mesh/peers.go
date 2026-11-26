@@ -33,7 +33,7 @@ func (e *Engine) syncPeers() error {
 	found := make(map[string]bool)
 	selfFound := false
 	addresses := make(map[netip.Addr]bool)
-	generationChanged := false
+	var changedPeerIDs []string
 	for _, peer := range items {
 		if peer.ID == e.options.Identity.DeviceID.String() {
 			selfFound = true
@@ -67,7 +67,7 @@ func (e *Engine) syncPeers() error {
 		previous, exists := e.peers[peer.ID]
 		e.mu.RUnlock()
 		if !exists || previous.PublicKey != peer.PublicKey || previous.VirtualIP != peer.VirtualIP {
-			generationChanged = true
+			changedPeerIDs = append(changedPeerIDs, peer.ID)
 			if exists {
 				oldKey, _ := base64.StdEncoding.DecodeString(previous.PublicKey)
 				_ = e.wg.IpcSet("public_key=" + hex.EncodeToString(oldKey) + "\nremove=true\n")
@@ -101,14 +101,14 @@ func (e *Engine) syncPeers() error {
 		removed = append(removed, peer)
 		removedIDs = append(removedIDs, id)
 		delete(e.peers, id)
-		generationChanged = true
+		changedPeerIDs = append(changedPeerIDs, id)
 	}
 	e.mu.Unlock()
 	for _, id := range removedIDs {
 		e.clearRelayAttempt(id)
 	}
-	if generationChanged {
-		e.advanceGeneration()
+	if len(changedPeerIDs) > 0 {
+		e.invalidatePeers(changedPeerIDs)
 	}
 	for _, peer := range removed {
 		key, _ := base64.StdEncoding.DecodeString(peer.PublicKey)

@@ -134,19 +134,19 @@ func validateInstallDir(raw string) (string, error) {
 	if trimmed == "" {
 		return "", errors.New("invalid installation directory")
 	}
-	if strings.HasPrefix(trimmed, `\\`) {
-		return "", errors.New("UNC and device paths are not allowed for installation directory")
-	}
 	if strings.ContainsAny(trimmed, "\"%\x00\r\n") {
 		return "", errors.New("installation directory contains unsupported characters")
 	}
 	cleaned := filepath.Clean(trimmed)
+	if strings.HasPrefix(cleaned, `\\`) {
+		return "", errors.New("UNC and device paths are not allowed for installation directory")
+	}
 	if !filepath.IsAbs(cleaned) {
 		return "", errors.New("installation directory must be an absolute path")
 	}
 	vol := filepath.VolumeName(cleaned)
-	if vol == "" || cleaned == vol || cleaned == vol+`\` {
-		return "", errors.New("cannot install directly to a drive root")
+	if len(vol) != 2 || vol[1] != ':' || cleaned == vol || cleaned == vol+`\` {
+		return "", errors.New("cannot install directly to a drive root or non-drive volume")
 	}
 	rest := strings.TrimPrefix(cleaned, vol)
 	for _, part := range strings.Split(rest, `\`) {
@@ -157,14 +157,24 @@ func validateInstallDir(raw string) (string, error) {
 			return "", errors.New("installation directory components must not end with a dot or space")
 		}
 	}
-	if ptr, err := windows.UTF16PtrFromString(cleaned); err == nil {
-		if attrs, attrErr := windows.GetFileAttributes(ptr); attrErr == nil {
-			if attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-				return "", errors.New("installation directory must not be a reparse point")
-			}
-		}
+	if err := rejectReparseComponents(cleaned); err != nil {
+		return "", err
 	}
 	return cleaned, nil
+}
+
+func rejectReparseComponents(path string) error {
+	for current := path; ; current = filepath.Dir(current) {
+		if ptr, err := windows.UTF16PtrFromString(current); err == nil {
+			if attrs, err := windows.GetFileAttributes(ptr); err == nil && attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+				return errors.New("installation directory must not traverse a reparse point")
+			}
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return nil
+		}
+	}
 }
 
 func detectExistingInstall(extraDirs ...string) (existingInstall, bool) {
@@ -295,8 +305,10 @@ type uninstallEntry struct {
 }
 
 func defaultInstallDir() string {
-	if pf := strings.TrimSpace(os.Getenv("ProgramFiles")); pf != "" {
-		return filepath.Join(pf, "TLAN")
+	if path, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, windows.KF_FLAG_DEFAULT); err == nil {
+		if pf := strings.TrimSpace(path); pf != "" {
+			return filepath.Join(pf, "TLAN")
+		}
 	}
 	return `C:\Program Files\TLAN`
 }
@@ -557,8 +569,10 @@ func uninstallTLAN(installDir string, removeUserData bool) error {
 	}
 	if removeUserData {
 		if configDir, err := os.UserConfigDir(); err == nil && strings.TrimSpace(configDir) != "" {
-			if remErr := os.RemoveAll(filepath.Join(configDir, "TLAN")); remErr != nil {
-				errs = append(errs, remErr)
+			for _, appDir := range []string{"TLAN", "LANMesh"} {
+				if remErr := os.RemoveAll(filepath.Join(configDir, appDir)); remErr != nil {
+					errs = append(errs, remErr)
+				}
 			}
 		}
 	}

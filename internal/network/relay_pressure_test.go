@@ -23,11 +23,11 @@ func newRelayPair(t *testing.T, limits RelayLimits) (*RelayBroker, *RelayConnect
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := broker.Attach(ticket, source)
+	a, err := broker.Attach(ticket.TicketFor(source), source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := broker.Attach(ticket, target)
+	b, err := broker.Attach(ticket.TicketFor(target), target)
 	if err != nil {
 		t.Fatal(err)
 	}

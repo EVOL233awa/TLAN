@@ -115,6 +115,12 @@ func TestVerifyWhitelistsAndMinimumClientVersion(t *testing.T) {
 		t.Fatalf("version whitelist error = %v", err)
 	}
 
+	vPrefixed := base
+	vPrefixed.AllowedVersions = []string{"v1.2.3"}
+	if _, err := VerifySignedManifest(data, vPrefixed); err != nil {
+		t.Fatalf("v-prefixed allowed version rejected: %v", err)
+	}
+
 	badPlatform := base
 	badPlatform.AllowedPlatforms = []string{"linux-amd64"}
 	if _, err := VerifySignedManifest(data, badPlatform); !errors.Is(err, ErrPlatformNotAllowed) {

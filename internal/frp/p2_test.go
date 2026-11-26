@@ -43,6 +43,26 @@ func TestValidateP2TargetsAndDomains(t *testing.T) {
 	}
 }
 
+func TestRenderConfigRejectsUnsafeLeaseCredential(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Profile.Server.Kind = "managed"
+	cfg.Profile.Server.ServerID = "frps-test"
+	for _, badCred := range []string{"short", "has\"quote", "has\nnewline", "has space here", "{{template}}"} {
+		_, err := RenderConfig(RenderInput{
+			Config:        cfg,
+			DeviceID:      "dev-test",
+			TokenPath:     `C:\ProgramData\TLAN\token.txt`,
+			AdminPort:     17400,
+			AdminUser:     "admin",
+			AdminPassword: strings.Repeat("a", 32),
+			Lease:         &Lease{ID: "lease-1", Credential: badCred, ExpiresAt: time.Now().Add(time.Minute)},
+		})
+		if err == nil {
+			t.Fatalf("expected unsafe credential %q to be rejected", badCred)
+		}
+	}
+}
+
 func TestSubdomainRequiresConfiguredHost(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.Profile.Rules[0].Type = "http"

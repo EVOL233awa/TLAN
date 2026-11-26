@@ -30,7 +30,7 @@ func TestValidateWireGuardPublicKeyRejectsLowOrderAndAcceptsValid(t *testing.T) 
 }
 
 func TestCandidateValidateRejectsLoopbackAndLinkLocal(t *testing.T) {
-	for _, addr := range []string{"127.0.0.1:4000", "169.254.1.10:4000", "224.0.0.1:4000", "0.0.0.0:4000"} {
+	for _, addr := range []string{"127.0.0.1:4000", "169.254.1.10:4000", "224.0.0.1:4000", "0.0.0.0:4000", "255.255.255.255:9", "0.0.0.1:9", "240.0.0.1:9", "[2001:db8::1]:9"} {
 		c := Candidate{Kind: CandidateHost, Transport: TransportUDP, Address: addr}
 		if err := c.Validate(); err == nil {
 			t.Fatalf("expected candidate %s to be rejected", addr)

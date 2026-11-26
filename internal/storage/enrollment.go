@@ -70,6 +70,27 @@ func (s *Store) EnrollPrivateAsAdmin(req core.RegisterDeviceRequest) (NetworkSum
 	return s.enrollPrivate(req, "", true)
 }
 
+// HasActivePrivateMemberCredential reports whether deviceID currently holds at
+// least one unrevoked member credential in the configured private network.
+func (s *Store) HasActivePrivateMemberCredential(deviceID core.DeviceID) bool {
+	if deviceID.Validate() != nil {
+		return false
+	}
+	id := deviceID.String()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	netID := s.data.PrivateNetworkID
+	if netID == "" {
+		return false
+	}
+	for _, cred := range s.data.MemberCredentials {
+		if cred.NetworkID == netID && cred.DeviceID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Store) enrollPrivate(req core.RegisterDeviceRequest, code string, admin bool) (NetworkSummary, Device, string, error) {
 	if err := req.Validate(); err != nil {
 		return NetworkSummary{}, Device{}, "", err

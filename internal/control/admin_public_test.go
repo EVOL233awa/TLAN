@@ -2,6 +2,7 @@ package control
 
 import (
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
@@ -147,5 +148,34 @@ func TestPublicAdminFailuresRateLimitBadTokensWithoutLockingOutValidToken(t *tes
 	// Valid admin token from the same proxy loopback IP must still succeed.
 	if _, err := clientapi.NewAdmin(server.URL, "test-admin-token").Overview(); err != nil {
 		t.Fatalf("valid admin token was locked out after bad attempts: %v", err)
+	}
+}
+
+func TestNonAdminPathEnforcesAdminTokenRateLimit(t *testing.T) {
+	store, err := storage.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer((&Server{Store: store, AdminToken: "test-admin-token"}).Handler())
+	defer server.Close()
+
+	badAPI := clientapi.New(server.URL, "wrong-admin-token")
+	for i := 0; i < adminLoginLimit; i++ {
+		if _, err := badAPI.ListNetworks(); err == nil {
+			t.Fatalf("attempt %d unexpectedly succeeded", i+1)
+		}
+	}
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/networks", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer wrong-admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("non-admin path admin-token status = %d, want 429", resp.StatusCode)
 	}
 }

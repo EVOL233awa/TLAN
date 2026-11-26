@@ -381,6 +381,9 @@ collect_user_config() {
   if [[ -z "$PUBLIC_HOST" ]]; then
     prompt_line "Public IP or domain name for Caddy TLS/endpoint" "$suggested_host" PUBLIC_HOST 0
   fi
+  if [[ -n "$PUBLIC_HOST" ]] && [[ ! "$PUBLIC_HOST" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    die "Invalid public host '${PUBLIC_HOST}': allowed characters are letters, digits, '.', '_', '-'."
+  fi
 
   if [[ -z "$ADMIN_TOKEN" ]]; then
     if (( NON_INTERACTIVE )); then
@@ -592,6 +595,10 @@ EOF
 # If using an IP address, clients can install the Caddy local root CA:
 #   ${CADDY_STATE_DIR}/.local/share/caddy/pki/authorities/local/root.crt
 
+{
+	admin off
+}
+
 ${site_host}:${HTTPS_PORT} {
 ${tls_directive:+	${tls_directive}}
 	reverse_proxy 127.0.0.1:${CONTROL_PORT} {
@@ -649,6 +656,9 @@ EOF
   if (( ! NO_CADDY )); then
     systemctl enable tlan-https.service
     systemctl restart tlan-https.service
+  else
+    systemctl stop tlan-https.service >/dev/null 2>&1 || true
+    systemctl disable tlan-https.service >/dev/null 2>&1 || true
   fi
 }
 

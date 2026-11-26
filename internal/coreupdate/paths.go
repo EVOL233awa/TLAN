@@ -10,6 +10,7 @@ import (
 
 const (
 	stateFileName      = ".coreupdate-state.json"
+	lockFileName       = ".coreupdate.lock"
 	tempDownloadPrefix = ".coreupdate-download-"
 	tempStatePrefix    = ".coreupdate-state-"
 	backupPrefix       = ".coreupdate-backup-"

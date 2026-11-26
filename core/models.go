@@ -203,7 +203,15 @@ func (c Candidate) Validate() error {
 		return errors.New("candidate address is required")
 	}
 	address, err := netip.ParseAddrPort(c.Address)
-	if err != nil || address.Port() == 0 || address.Addr().IsUnspecified() || address.Addr().IsMulticast() || address.Addr().IsLoopback() || address.Addr().IsLinkLocalUnicast() || address.Addr().IsLinkLocalMulticast() {
+	if err != nil || address.Port() == 0 {
+		return errors.New("candidate must contain a routable unicast IP address and a nonzero port")
+	}
+	ip := address.Addr()
+	if !ip.Is4() || !ip.IsGlobalUnicast() || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return errors.New("candidate must contain a routable unicast IP address and a nonzero port")
+	}
+	octets := ip.As4()
+	if octets[0] == 0 || octets[0] >= 240 {
 		return errors.New("candidate must contain a routable unicast IP address and a nonzero port")
 	}
 	if len(c.Token) > 2048 {

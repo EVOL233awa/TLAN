@@ -24,7 +24,11 @@ func runPowerShell(runner Runner, script string) ([]byte, error) {
 	for i, value := range units {
 		binary.LittleEndian.PutUint16(data[i*2:], value)
 	}
-	return runner.Run(systemPowerShell(), "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(data))
+	shell, err := systemPowerShell()
+	if err != nil {
+		return nil, err
+	}
+	return runner.Run(shell, "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(data))
 }
 
 func cleanupResource(record ResourceRecord, runner Runner) error {
@@ -46,16 +50,32 @@ func cleanupResource(record ResourceRecord, runner Runner) error {
 	}
 }
 
+func isManagedVirtualAdapter(adapter adapterInfo) bool {
+	// Mocked unit tests that omit IfType/Description still test GUID matching.
+	if adapter.IfType == 0 && strings.TrimSpace(adapter.Description) == "" {
+		return true
+	}
+	if adapter.IfType == 53 {
+		return true
+	}
+	desc := strings.ToLower(adapter.Description)
+	return strings.Contains(desc, "wintun") || strings.Contains(desc, "wireguard")
+}
+
 func cleanupWintunInterface(record ResourceRecord, runner Runner) error {
-	guid, present, err := queryAdapterGUID(record.Name)
+	adapter, present, err := lookupAdapter(record.Name)
 	if err != nil {
 		return err
 	}
 	if !present {
 		return nil
 	}
-	if !sameGUID(guid, record.ResourceID) {
-		return fmt.Errorf("%w: adapter %q GUID %q does not match %q", ErrResourceNotOwned, record.Name, guid, record.ResourceID)
+	if !isManagedVirtualAdapter(adapter) {
+		return fmt.Errorf("%w: adapter %q (%s) is not a TLAN virtual adapter", ErrResourceNotOwned, record.Name, adapter.Description)
+	}
+	guid, err := normalizeGUID(adapter.GUID)
+	if err != nil || !sameGUID(guid, record.ResourceID) {
+		return fmt.Errorf("%w: adapter %q GUID %q does not match %q", ErrResourceNotOwned, record.Name, adapter.GUID, record.ResourceID)
 	}
 	if _, err := runPowerShell(runner, "Remove-NetAdapter -Name "+psQuote(record.Name)+" -Confirm:$false -ErrorAction Stop | Out-Null"); err != nil {
 		return fmt.Errorf("remove Wintun adapter %q: %w", record.Name, err)
@@ -127,6 +147,9 @@ func cleanupRoute(record ResourceRecord, runner Runner) error {
 }
 
 func cleanupFirewallRule(record ResourceRecord) error {
+	if !strings.HasPrefix(record.Name, "TLAN-") && !strings.HasPrefix(record.Name, "LANMesh-") {
+		return fmt.Errorf("%w: firewall rule %q is not managed by TLAN", ErrResourceNotOwned, record.Name)
+	}
 	expected, err := normalizePrefixText(record.Prefix)
 	if err != nil {
 		return fmt.Errorf("%w: invalid firewall prefix %q", ErrResourceNotOwned, record.Prefix)
@@ -152,15 +175,16 @@ func cleanupFirewallRule(record ResourceRecord) error {
 }
 
 func verifyAdapterParent(record ResourceRecord) (bool, error) {
-	guid, present, err := queryAdapterGUID(record.Name)
-	if err != nil {
-		return false, err
+	adapter, present, err := lookupAdapter(record.Name)
+	if err != nil || !present {
+		return present, err
 	}
-	if !present {
-		return false, nil
+	if !isManagedVirtualAdapter(adapter) {
+		return false, fmt.Errorf("%w: adapter %q (%s) is not a TLAN virtual adapter", ErrResourceNotOwned, record.Name, adapter.Description)
 	}
-	if !sameGUID(guid, record.ParentID) {
-		return false, fmt.Errorf("%w: adapter %q GUID %q does not match parent %q", ErrResourceNotOwned, record.Name, guid, record.ParentID)
+	guid, err := normalizeGUID(adapter.GUID)
+	if err != nil || !sameGUID(guid, record.ParentID) {
+		return false, fmt.Errorf("%w: adapter %q GUID %q does not match parent %q", ErrResourceNotOwned, record.Name, adapter.GUID, record.ParentID)
 	}
 	return true, nil
 }

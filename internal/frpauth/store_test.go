@@ -788,3 +788,156 @@ func TestLeaseStateCapsInactiveTombstonesAndSizeBudget(t *testing.T) {
 		t.Fatalf("retained inactive leases = %d, want <= %d", len(reopened.leases), maxRetainedInactiveLeases)
 	}
 }
+
+func TestIssueSameDeviceTakeoverSupersedesStaleLeaseOnRestart(t *testing.T) {
+	store, _ := testStore(t)
+	store.limits.MaxLeasesPerDevice = 1
+	first, err := store.Issue("net-a", "dev-a", "frps-managed-1", []Rule{
+		{ID: "rule-tcp", ProxyName: "tlan_tcp", Type: "tcp", RemotePort: 30001, BindPort: 8080},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.Issue("net-a", "dev-a", "frps-managed-1", []Rule{
+		{ID: "rule-tcp", ProxyName: "tlan_tcp", Type: "tcp", RemotePort: 30001, BindPort: 8080},
+	})
+	if err != nil {
+		t.Fatalf("same-device takeover failed: %v", err)
+	}
+	if err := store.AuthorizeLogin(LoginRequest{LeaseID: first.LeaseID, Capability: first.Credential, ServerID: "frps-managed-1", User: "user-a", RunID: "run-1"}); !errors.Is(err, ErrRevoked) {
+		t.Fatalf("superseded lease login err = %v, want ErrRevoked", err)
+	}
+	if err := store.AuthorizeLogin(LoginRequest{LeaseID: second.LeaseID, Capability: second.Credential, ServerID: "frps-managed-1", User: "user-a", RunID: "run-2"}); err != nil {
+		t.Fatalf("replacement lease login err = %v", err)
+	}
+}
+
+func TestRequestServicePendingCapTTLAndIdempotentUpsert(t *testing.T) {
+	store, _ := testStore(t)
+	if _, err := store.RequestService("net-a", "dev-b", "dev-a", "svc-too-long", "tcp", 8080, "too long", 48*time.Hour); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("48h pending service TTL err = %v, want ErrInvalid", err)
+	}
+	first, err := store.RequestService("net-a", "dev-b", "dev-a", "svc-1", "tcp", 8080, "v1", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upserted, err := store.RequestService("net-a", "dev-b", "dev-a", "", "tcp", 8080, "v2", 2*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upserted.ID != first.ID || upserted.Description != "v2" || upserted.Version <= first.Version {
+		t.Fatalf("expected idempotent upsert of %+v, got %+v", first, upserted)
+	}
+	for i := 1; i < MaxPendingServicesPerRequester; i++ {
+		if _, err := store.RequestService("net-a", "dev-b", "dev-a", "", "tcp", 8080+i, "ok", time.Hour); err != nil {
+			t.Fatalf("pending #%d err = %v", i, err)
+		}
+	}
+	if _, err := store.RequestService("net-a", "dev-b", "dev-a", "", "tcp", 9000, "over cap", time.Hour); !errors.Is(err, ErrQuota) {
+		t.Fatalf("pending cap err = %v, want ErrQuota", err)
+	}
+}
+
+func TestLeaseSizeCapBackupRecoveryAndSetAllowedPortsRollback(t *testing.T) {
+	store, _ := testStore(t)
+	oversized := Rule{
+		ID: "rule-big", ProxyName: "tlan_big", Type: "http", BindPort: 8080,
+		CustomDomains: []string{"big.frp.example.com"},
+		Headers:       map[string]string{},
+	}
+	bigVal := strings.Repeat("a", 4000)
+	for i := 0; i < 20; i++ {
+		oversized.Headers["X-Pad-"+string(rune('a'+i))] = bigVal
+	}
+	if _, err := store.Issue("net-a", "dev-a", "frps-managed-1", []Rule{oversized}); !errors.Is(err, ErrQuota) {
+		t.Fatalf("oversized lease err = %v, want ErrQuota", err)
+	}
+
+	lease1, err := store.Issue("net-a", "dev-a", "frps-managed-1", []Rule{
+		{ID: "rule-1", ProxyName: "tlan_1", Type: "tcp", RemotePort: 30001, BindPort: 8080},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Issue("net-a", "dev-b", "frps-managed-1", []Rule{
+		{ID: "rule-2", ProxyName: "tlan_2", Type: "tcp", RemotePort: 30002, BindPort: 8081},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Primary state is corrupted while .bak holds valid state (at least lease1).
+	if err := os.WriteFile(store.path, []byte("{corrupted"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := NewStore(Options{
+		StatePath:      store.path,
+		ServerID:       "frps-managed-1",
+		CoreVersion:    "0.71.1",
+		AllowedPorts:   []PortRange{{Start: 30000, End: 30099}},
+		AllowedDomains: []string{"frp.example.com"},
+	})
+	if err != nil {
+		t.Fatalf("expected .bak recovery, got %v", err)
+	}
+	if _, err := reopened.Status(lease1.LeaseID, "net-a", "dev-a"); err != nil {
+		t.Fatalf("lease1 missing after .bak recovery: %v", err)
+	}
+	// Verify SetAllowedPorts rolls back leases when persistence fails.
+	badStore, _ := testStore(t)
+	leaseRollback, err := badStore.Issue("net-a", "dev-a", "frps-managed-1", []Rule{
+		{ID: "rule-rb", ProxyName: "tlan_rb", Type: "tcp", RemotePort: 30005, BindPort: 8080},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	badStore.path = filepath.Join(t.TempDir(), "missing-parent", "sub", "state.json")
+	// Remove parent dir and replace with regular file so persistLocked fails deterministically.
+	blockingFile := filepath.Dir(badStore.path)
+	_ = os.MkdirAll(filepath.Dir(blockingFile), 0o700)
+	_ = os.WriteFile(blockingFile, []byte("not-a-dir"), 0o600)
+	if err := badStore.SetAllowedPorts([]PortRange{{Start: 60000, End: 61000}}); err == nil {
+		t.Fatal("expected SetAllowedPorts persist failure")
+	}
+	if status, err := badStore.Status(leaseRollback.LeaseID, "net-a", "dev-a"); err != nil || status.Revoked {
+		t.Fatalf("lease was mutated despite SetAllowedPorts failure: status=%+v err=%v", status, err)
+	}
+}
+
+func TestSubDomainHostValidationAndUnifiedConflictKeys(t *testing.T) {
+	store, err := NewStore(Options{
+		StatePath:      filepath.Join(t.TempDir(), "frp-leases.json"),
+		ServerID:       "frps-managed-1",
+		CoreVersion:    "0.71.1",
+		AllowedPorts:   []PortRange{{Start: 30000, End: 30099}},
+		AllowedDomains: []string{"allowed.example.com"},
+		SubDomainHost:  "sub.example.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Issue("net-a", "dev-a", "frps-managed-1", []Rule{
+		{ID: "rule-sub", ProxyName: "tlan_sub", Type: "http", SubDomain: "app", BindPort: 8080},
+	}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("disallowed subdomain host err = %v, want ErrInvalid", err)
+	}
+	store2, err := NewStore(Options{
+		StatePath:      filepath.Join(t.TempDir(), "frp-leases-2.json"),
+		ServerID:       "frps-managed-1",
+		CoreVersion:    "0.71.1",
+		AllowedPorts:   []PortRange{{Start: 30000, End: 30099}},
+		AllowedDomains: []string{"frp.example.com"},
+		SubDomainHost:  "frp.example.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store2.Issue("net-a", "dev-a", "frps-managed-1", []Rule{
+		{ID: "rule-1", ProxyName: "tlan_1", Type: "http", CustomDomains: []string{"app.frp.example.com"}, BindPort: 8080},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store2.Issue("net-a", "dev-b", "frps-managed-1", []Rule{
+		{ID: "rule-2", ProxyName: "tlan_2", Type: "http", SubDomain: "app", BindPort: 8081},
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("subdomain conflicting with custom domain err = %v, want ErrConflict", err)
+	}
+}

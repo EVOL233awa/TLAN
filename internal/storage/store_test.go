@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -172,6 +173,59 @@ func TestHeartbeatAndUnchangedCandidatesThrottleDiskWrites(t *testing.T) {
 	}
 	if v, ok := store.ClientVersion("dev-throttle"); !ok || v != "" {
 		t.Fatalf("invalid client version persisted: %q", v)
+	}
+}
+
+func TestSetClientVersionThrottlesPersistWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.EnsurePrivateNetwork("friends", "friends-code", "10.243.0.0/24"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := store.EnrollPrivate(core.RegisterDeviceRequest{
+		DeviceID:           "dev-version",
+		WireGuardPublicKey: "CQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+	}, "friends-code"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetClientVersion("dev-version", "v1.2.0"); err != nil {
+		t.Fatal(err)
+	}
+	infoBefore, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	for i := 0; i < 20; i++ {
+		if err := store.SetClientVersion("dev-version", fmt.Sprintf("v1.2.%d", i+1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	infoAfter, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !infoAfter.ModTime().Equal(infoBefore.ModTime()) {
+		t.Fatal("version churn rewrote the state file inside the throttle window")
+	}
+	if version, ok := store.ClientVersion("dev-version"); !ok || version != "v1.2.20" {
+		t.Fatalf("in-memory version = %q, want the latest report", version)
+	}
+	store.mu.Lock()
+	store.lastVersionPersist["dev-version"] = time.Now().Add(-2 * clientVersionPersistInterval)
+	store.mu.Unlock()
+	if err := store.SetClientVersion("dev-version", "v1.3.0"); err != nil {
+		t.Fatal(err)
+	}
+	infoLater, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if infoLater.ModTime().Equal(infoAfter.ModTime()) {
+		t.Fatal("version change after the throttle window was not persisted")
 	}
 }
 

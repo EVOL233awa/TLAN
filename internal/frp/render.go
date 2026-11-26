@@ -3,9 +3,19 @@ package frp
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
+
+var managedCredentialPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{8,256}$`)
+
+func validateManagedCredential(value string) error {
+	if !managedCredentialPattern.MatchString(value) {
+		return codedError(CodeAuthRejected, "managed FRP lease credential contains invalid characters or length")
+	}
+	return nil
+}
 
 const (
 	// ManagedHeartbeatInterval keeps revocation latency bounded for official
@@ -126,6 +136,9 @@ func RenderConfig(input RenderInput) (RenderedConfig, error) {
 	if cfg.Profile.Server.Kind == "managed" {
 		if input.Lease == nil || input.Lease.ID == "" || input.Lease.Credential == "" {
 			return RenderedConfig{}, codedError(CodeAuthRejected, "managed FRP lease is required")
+		}
+		if err := validateManagedCredential(input.Lease.Credential); err != nil {
+			return RenderedConfig{}, err
 		}
 		fmt.Fprintf(&b, "transport.heartbeatInterval = %d\n", ManagedHeartbeatInterval)
 		fmt.Fprintf(&b, "transport.heartbeatTimeout = %d\n", ManagedHeartbeatTimeout)

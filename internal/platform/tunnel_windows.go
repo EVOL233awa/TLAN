@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -27,8 +26,11 @@ func commandOutputWithRunner(runner Runner, program string, args ...string) ([]b
 	if runner == nil {
 		runner = SystemRunner{}
 	}
-	path := filepath.Join(os.Getenv("SystemRoot"), "System32", program)
-	return runner.Run(path, args...)
+	dir, err := windows.GetSystemDirectory()
+	if err != nil {
+		return nil, fmt.Errorf("resolve system directory: %w", err)
+	}
+	return runner.Run(filepath.Join(dir, program), args...)
 }
 
 func openTunnel(name string, address netip.Prefix, mtu int, options TunnelOptions) (*IPTunnel, error) {

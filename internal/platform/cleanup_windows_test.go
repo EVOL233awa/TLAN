@@ -285,6 +285,36 @@ func TestWindowsAdapterQueryTreatsMissingAdapterAsAbsent(t *testing.T) {
 	}
 }
 
+func TestWindowsCleanupRejectsPhysicalAdapterEvenWhenGUIDMatches(t *testing.T) {
+	record := makeOwnedRecord(t, "instance", ResourceWintunInterface, "Ethernet", "192.168.1.0/24", "{11111111-1111-1111-1111-111111111111}", "{11111111-1111-1111-1111-111111111111}")
+	restore := stubAdapters(t, []adapterInfo{{
+		Name:        "Ethernet",
+		Description: "Intel(R) Ethernet Connection",
+		GUID:        "{11111111-1111-1111-1111-111111111111}",
+		IfType:      6,
+	}})
+	defer restore()
+	runner := &fakeWindowsRunner{handle: func(script string) ([]byte, error) {
+		t.Fatalf("physical adapter must not be touched: %s", script)
+		return nil, nil
+	}}
+	if err := CleanupResourceWithRunner(record, runner); !errors.Is(err, ErrResourceNotOwned) {
+		t.Fatalf("cleanup error = %v, want ErrResourceNotOwned", err)
+	}
+}
+
+func TestWindowsCleanupRejectsForeignFirewallRulePrefix(t *testing.T) {
+	record := makeOwnedRecord(t, "instance", ResourceFirewallRule, "CoreNetworking-DNS", "10.44.0.0/24", "CoreNetworking-DNS", "{22222222-2222-2222-2222-222222222222}")
+	fake := &fakeFirewall{rules: map[string]firewallState{"CoreNetworking-DNS": {Found: true, Remote: "10.44.0.0/24"}}}
+	stubFirewall(t, fake)
+	if err := CleanupResourceWithRunner(record, &fakeWindowsRunner{}); !errors.Is(err, ErrResourceNotOwned) {
+		t.Fatalf("cleanup error = %v, want ErrResourceNotOwned", err)
+	}
+	if len(fake.removed) != 0 {
+		t.Fatalf("foreign rule was removed: %#v", fake.removed)
+	}
+}
+
 func stubAdapters(t *testing.T, adapters []adapterInfo) func() {
 	t.Helper()
 	previous := listAdapters

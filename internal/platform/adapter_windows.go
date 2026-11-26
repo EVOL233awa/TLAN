@@ -14,13 +14,14 @@ import (
 // ledger tracks. It is read in-process through the IP helper API so the
 // connect path never has to start PowerShell.
 type adapterInfo struct {
-	Name       string // interface alias, e.g. "LANMesh"
-	GUID       string // device interface GUID, e.g. {7CA4C178-...}
-	IfIndex    uint32
-	IfType     uint32
-	OperStatus uint32
-	MTU        uint32
-	LUID       uint64
+	Name        string // interface alias, e.g. "LANMesh"
+	Description string // driver/interface description, e.g. "Wintun Userspace Tunnel"
+	GUID        string // device interface GUID, e.g. {7CA4C178-...}
+	IfIndex     uint32
+	IfType      uint32
+	OperStatus  uint32
+	MTU         uint32
+	LUID        uint64
 }
 
 // listAdapters is a seam for tests; production reads the Win32 adapter table.
@@ -48,13 +49,14 @@ func collectAdapters(first *windows.IpAdapterAddresses) []adapterInfo {
 	var adapters []adapterInfo
 	for node := first; node != nil; node = node.Next {
 		adapters = append(adapters, adapterInfo{
-			Name:       windows.UTF16PtrToString(node.FriendlyName),
-			GUID:       windows.BytePtrToString(node.AdapterName),
-			IfIndex:    node.IfIndex,
-			IfType:     node.IfType,
-			OperStatus: node.OperStatus,
-			MTU:        node.Mtu,
-			LUID:       node.Luid,
+			Name:        windows.UTF16PtrToString(node.FriendlyName),
+			Description: windows.UTF16PtrToString(node.Description),
+			GUID:        windows.BytePtrToString(node.AdapterName),
+			IfIndex:     node.IfIndex,
+			IfType:      node.IfType,
+			OperStatus:  node.OperStatus,
+			MTU:         node.Mtu,
+			LUID:        node.Luid,
 		})
 	}
 	return adapters

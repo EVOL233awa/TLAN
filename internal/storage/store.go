@@ -24,6 +24,8 @@ var ErrNetworkFull = errors.New("network address pool is full")
 var ErrConflict = errors.New("resource conflict")
 var ErrBlocked = errors.New("device is blocked")
 
+const clientVersionPersistInterval = time.Minute
+
 type PortRange struct {
 	Start int `json:"start"`
 	End   int `json:"end"`
@@ -123,6 +125,7 @@ type Store struct {
 	data                 State
 	committed            []byte
 	lastHeartbeatPersist time.Time
+	lastVersionPersist   map[string]time.Time
 }
 
 func (s *Store) CreateNetwork(name, password, cidr string) (NetworkSummary, error) {
@@ -464,6 +467,7 @@ func (s *Store) RemoveDevice(networkID, deviceID string) error {
 	}
 	delete(s.data.Candidates, networkID+"/"+deviceID)
 	delete(s.data.Diagnostics, networkID+"/"+deviceID)
+	delete(s.lastVersionPersist, deviceID)
 	s.data.Networks[networkID] = network
 	return s.persistLocked()
 }
@@ -568,6 +572,14 @@ func (s *Store) SetClientVersion(deviceID core.DeviceID, version string) error {
 	}
 	device.ClientVersion = version
 	s.data.Devices[deviceID.String()] = device
+	key := deviceID.String()
+	if last, ok := s.lastVersionPersist[key]; ok && time.Since(last) < clientVersionPersistInterval {
+		return nil
+	}
+	if s.lastVersionPersist == nil {
+		s.lastVersionPersist = make(map[string]time.Time)
+	}
+	s.lastVersionPersist[key] = time.Now()
 	return s.persistLocked()
 }
 

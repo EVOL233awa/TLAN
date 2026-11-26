@@ -4,6 +4,10 @@
 # export /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt to clients,
 # or remove "tls internal" when using a public domain name for automatic Let's Encrypt.
 
+{
+	admin off
+}
+
 {$TLAN_PUBLIC_HOST:}:8443 {
 	tls internal
 	reverse_proxy 127.0.0.1:8080 {

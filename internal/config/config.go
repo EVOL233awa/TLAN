@@ -82,6 +82,7 @@ type FRPConfig struct {
 	MaxDomainsPerRule   int           `yaml:"max_domains_per_rule,omitempty"`
 	AllowedPorts        FRPPortList   `yaml:"allowed_ports,omitempty"`
 	AllowedDomains      FRPDomainList `yaml:"allowed_domains,omitempty"`
+	SubDomainHost       string        `yaml:"subdomain_host,omitempty"`
 	ClientHost          string        `yaml:"client_host,omitempty"`
 	ClientPort          int           `yaml:"client_port,omitempty"`
 	ClientTransport     string        `yaml:"client_transport,omitempty"`
@@ -606,7 +607,7 @@ func (f FRPConfig) Validate() error {
 		if f.ServerID != "" || f.PluginListen != "" || f.LeaseStateFile != "" ||
 			f.LeaseTTLSeconds != 0 || f.MaxRulesPerLease != 0 || f.MaxLeasesPerDevice != 0 ||
 			f.MaxPortsPerDevice != 0 || f.MaxDomainsPerDevice != 0 || f.MaxDomainsPerRule != 0 ||
-			len(ports) != 0 || len(domains) != 0 {
+			len(ports) != 0 || len(domains) != 0 || f.SubDomainHost != "" {
 			return fmt.Errorf("mode %q must not contain managed authorization fields", mode)
 		}
 		if f.CoreVersion != "" && f.CoreVersion != "0.71.1" {
@@ -652,6 +653,11 @@ func (f FRPConfig) Validate() error {
 	for _, domain := range domains {
 		if err := validateAllowedDomainSuffix(domain); err != nil {
 			return fmt.Errorf("frp.allowed_domains: %w", err)
+		}
+	}
+	if strings.TrimSpace(f.SubDomainHost) != "" {
+		if err := validateAllowedDomainSuffix(f.SubDomainHost); err != nil {
+			return fmt.Errorf("frp.subdomain_host: %w", err)
 		}
 	}
 	return nil

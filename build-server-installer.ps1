@@ -33,9 +33,9 @@ Move-Item -Force (Join-Path $payload 'LICENSE') (Join-Path $payload 'licenses\ca
 
 $env:GOOS = 'linux'; $env:GOARCH = 'amd64'; $env:CGO_ENABLED = '0'
 try {
-    go build -mod=vendor -ldflags '-s -w' -o "$payload\tlan-server" ./cmd/server
+    go build -mod=vendor -trimpath -ldflags '-s -w' -o "$payload\tlan-server" ./cmd/server
     if ($LASTEXITCODE -ne 0) { throw 'go build ./cmd/server failed.' }
-    go build -mod=vendor -ldflags '-s -w' -o "$payload\install-helper" ./cmd/install-helper
+    go build -mod=vendor -trimpath -ldflags '-s -w' -o "$payload\install-helper" ./cmd/install-helper
     if ($LASTEXITCODE -ne 0) { throw 'go build ./cmd/install-helper failed.' }
 } finally {
     Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED -ErrorAction SilentlyContinue

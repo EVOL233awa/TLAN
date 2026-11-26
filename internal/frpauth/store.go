@@ -84,13 +84,14 @@ type Store struct {
 	path        string
 	serverID    string
 	coreVersion string
-	leaseTTL    time.Duration
-	limits      Limits
-	ports       []PortRange
-	domains     []string
-	leases      map[string]leaseRecord
-	services    map[string]serviceRecord
-	now         func() time.Time
+	leaseTTL      time.Duration
+	limits        Limits
+	ports         []PortRange
+	domains       []string
+	subDomainHost string
+	leases        map[string]leaseRecord
+	services      map[string]serviceRecord
+	now           func() time.Time
 }
 
 // NewStore opens a managed authorization store. A malformed or unsupported
@@ -137,21 +138,29 @@ func NewStore(options Options) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	subDomainHost := ""
+	if rawHost := strings.TrimSpace(options.SubDomainHost); rawHost != "" {
+		subDomainHost, err = normalizeDomain(rawHost)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid subdomain_host", ErrInvalid)
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(absolute), 0o700); err != nil {
 		return nil, fmt.Errorf("create FRP lease state directory: %w", err)
 	}
 	_ = os.Chmod(filepath.Dir(absolute), 0o700)
 	store := &Store{
-		path:        absolute,
-		serverID:    serverID,
-		coreVersion: coreVersion,
-		leaseTTL:    ttl,
-		limits:      limits,
-		ports:       ports,
-		domains:     domains,
-		leases:      make(map[string]leaseRecord),
-		services:    make(map[string]serviceRecord),
-		now:         time.Now,
+		path:          absolute,
+		serverID:      serverID,
+		coreVersion:   coreVersion,
+		leaseTTL:      ttl,
+		limits:        limits,
+		ports:         ports,
+		domains:       domains,
+		subDomainHost: subDomainHost,
+		leases:        make(map[string]leaseRecord),
+		services:      make(map[string]serviceRecord),
+		now:           time.Now,
 	}
 	if err := store.load(); err != nil {
 		return nil, err
@@ -180,71 +189,100 @@ func normalizeAllowedDomains(values []string) ([]string, error) {
 const (
 	maxPersistedStateBytes    = 8 * 1024 * 1024
 	maxPersistedLoadBytes     = 32 * 1024 * 1024
+	maxLeaseRecordBytes       = 64 * 1024
+	maxDeviceLeasesBytes      = 512 * 1024
 	maxRetainedInactiveLeases = 512
 )
 
-func (s *Store) load() error {
-	data, err := os.ReadFile(s.path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
+func (s *Store) decodeStateFile(path string) (persistedState, int, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("read FRP lease state: %w", err)
+		return persistedState{}, 0, err
 	}
 	if len(data) > maxPersistedLoadBytes {
-		return fmt.Errorf("%w: FRP lease state exceeds size limit", ErrInvalid)
+		return persistedState{}, len(data), fmt.Errorf("%w: FRP lease state exceeds size limit", ErrInvalid)
 	}
-	oversized := len(data) > maxPersistedStateBytes
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var state persistedState
 	if err := decoder.Decode(&state); err != nil {
-		return fmt.Errorf("decode FRP lease state: %w", err)
+		return persistedState{}, len(data), fmt.Errorf("decode FRP lease state: %w", err)
 	}
 	if err := ensureJSONEOF(decoder); err != nil {
-		return fmt.Errorf("decode FRP lease state: %w", err)
+		return persistedState{}, len(data), fmt.Errorf("decode FRP lease state: %w", err)
 	}
 	if state.SchemaVersion != SchemaVersion {
-		return fmt.Errorf("%w: unsupported FRP lease state schema", ErrInvalid)
+		return persistedState{}, len(data), fmt.Errorf("%w: unsupported FRP lease state schema", ErrInvalid)
 	}
 	if len(state.Leases) > MaxPersistedLeaseRecords {
-		return fmt.Errorf("%w: too many persisted FRP leases", ErrInvalid)
+		return persistedState{}, len(data), fmt.Errorf("%w: too many persisted FRP leases", ErrInvalid)
 	}
+	seenLeases := make(map[string]struct{}, len(state.Leases))
 	for _, record := range state.Leases {
 		if err := s.validateLoadedRecord(record); err != nil {
-			return fmt.Errorf("invalid persisted FRP lease %q: %w", record.ID, err)
+			return persistedState{}, len(data), fmt.Errorf("invalid persisted FRP lease %q: %w", record.ID, err)
 		}
-		if _, exists := s.leases[record.ID]; exists {
-			return fmt.Errorf("%w: duplicate persisted lease id", ErrInvalid)
+		if _, exists := seenLeases[record.ID]; exists {
+			return persistedState{}, len(data), fmt.Errorf("%w: duplicate persisted lease id", ErrInvalid)
 		}
+		seenLeases[record.ID] = struct{}{}
+	}
+	if len(state.Services) > MaxPersistedServiceRecords {
+		return persistedState{}, len(data), fmt.Errorf("%w: too many persisted FRP services", ErrInvalid)
+	}
+	seenServices := make(map[string]struct{}, len(state.Services))
+	for _, service := range state.Services {
+		if err := validateServiceRecord(service); err != nil {
+			return persistedState{}, len(data), fmt.Errorf("invalid persisted FRP service %q: %w", service.ID, err)
+		}
+		if service.ServerID != s.serverID {
+			return persistedState{}, len(data), fmt.Errorf("%w: service authorization belongs to a different server", ErrUnauthorized)
+		}
+		if _, exists := seenServices[service.ID]; exists {
+			return persistedState{}, len(data), fmt.Errorf("%w: duplicate persisted service id", ErrInvalid)
+		}
+		seenServices[service.ID] = struct{}{}
+	}
+	return state, len(data), nil
+}
+
+func (s *Store) load() error {
+	recoveredFromBackup := false
+	state, rawSize, err := s.decodeStateFile(s.path)
+	if err != nil {
+		bakState, bakSize, bakErr := s.decodeStateFile(s.path + ".bak")
+		if bakErr != nil {
+			if errors.Is(err, os.ErrNotExist) && errors.Is(bakErr, os.ErrNotExist) {
+				return nil
+			}
+			if errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("read FRP lease state: %w", err)
+			}
+			return fmt.Errorf("read FRP lease state: %w", err)
+		}
+		state, rawSize, recoveredFromBackup = bakState, bakSize, true
+	}
+	for _, record := range state.Leases {
 		if record.Proxies == nil {
 			record.Proxies = make(map[string]string)
 		}
 		s.leases[record.ID] = record
 	}
-
-	if len(state.Services) > MaxPersistedServiceRecords {
-		return fmt.Errorf("%w: too many persisted FRP services", ErrInvalid)
-	}
 	for _, service := range state.Services {
-		if err := validateServiceRecord(service); err != nil {
-			return fmt.Errorf("invalid persisted FRP service %q: %w", service.ID, err)
-		}
-		if service.ServerID != s.serverID {
-			return fmt.Errorf("%w: service authorization belongs to a different server", ErrUnauthorized)
-		}
-		if _, exists := s.services[service.ID]; exists {
-			return fmt.Errorf("%w: duplicate persisted service id", ErrInvalid)
-		}
 		s.services[service.ID] = service
 	}
+	oversized := rawSize > maxPersistedStateBytes
 	if oversized {
 		s.pruneLocked(s.now().UTC())
 	}
 	if err := s.reconcileLoadedPolicyLocked(); err != nil {
 		return err
 	}
-	if oversized {
+	if recoveredFromBackup {
+		if err := s.persistLockedWithBackup(false); err != nil {
+			return err
+		}
+	} else if oversized {
 		if err := s.persistLocked(); err != nil {
 			return err
 		}
@@ -260,22 +298,25 @@ func (s *Store) load() error {
 // making the control service crash-loop while still failing closed.
 func (s *Store) reconcileLoadedPolicyLocked() error {
 	now := s.now().UTC()
-	changed := false
+	originals := make(map[string]leaseRecord)
 	for id, record := range s.leases {
 		if record.RevokedAt != nil || !now.Before(record.ExpiresAt) {
 			continue
 		}
-		if _, err := validateRules(record.Rules, s.limits, s.ports, s.domains, true); err != nil {
+		if _, err := validateRules(record.Rules, s.limits, s.ports, s.domains, s.subDomainHost, true); err != nil {
+			originals[id] = record.clone()
 			record.RevokedAt = &now
 			record.LastSeen = now
 			s.leases[id] = record
-			changed = true
 		}
 	}
-	if !changed {
+	if len(originals) == 0 {
 		return nil
 	}
 	if err := s.persistLocked(); err != nil {
+		for id, original := range originals {
+			s.leases[id] = original
+		}
 		return fmt.Errorf("persist revoked out-of-policy FRP leases: %w", err)
 	}
 	return nil
@@ -363,7 +404,7 @@ func (s *Store) validateLoadedRecord(record leaseRecord) error {
 	if err := validateNetworkDevice(record.NetworkID, record.DeviceID); err != nil {
 		return err
 	}
-	if _, err := validateRules(record.Rules, s.limits, s.ports, s.domains, false); err != nil {
+	if _, err := validateRules(record.Rules, s.limits, s.ports, s.domains, s.subDomainHost, false); err != nil {
 		return err
 	}
 	if record.CreatedAt.IsZero() || record.ExpiresAt.IsZero() || !record.ExpiresAt.After(record.CreatedAt) {
@@ -408,6 +449,10 @@ func (s *Store) buildPersistedState() persistedState {
 }
 
 func (s *Store) persistLocked() error {
+	return s.persistLockedWithBackup(true)
+}
+
+func (s *Store) persistLockedWithBackup(backup bool) error {
 	data, err := json.MarshalIndent(s.buildPersistedState(), "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode FRP lease state: %w", err)
@@ -418,6 +463,11 @@ func (s *Store) persistLocked() error {
 		for id, record := range s.leases {
 			if !s.activeAt(record, now) {
 				delete(s.leases, id)
+			}
+		}
+		for id, service := range s.services {
+			if service.RevokedAt != nil || !now.Before(service.ExpiresAt) || service.ApprovalStatus == ServiceApprovalDenied {
+				delete(s.services, id)
 			}
 		}
 		data, err = json.MarshalIndent(s.buildPersistedState(), "", "  ")
@@ -432,7 +482,30 @@ func (s *Store) persistLocked() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o750); err != nil {
 		return fmt.Errorf("prepare FRP lease state dir: %w", err)
 	}
-	tmpFile, err := os.CreateTemp(filepath.Dir(s.path), "."+filepath.Base(s.path)+"-*.tmp")
+	if backup {
+		if err := s.writeBackupLocked(); err != nil {
+			return err
+		}
+	}
+	return writeAtomicStateFile(s.path, payload)
+}
+
+func (s *Store) writeBackupLocked() error {
+	existing, err := os.ReadFile(s.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read current FRP lease state for backup: %w", err)
+	}
+	if len(existing) == 0 || len(existing) > maxPersistedLoadBytes {
+		return nil
+	}
+	return writeAtomicStateFile(s.path+".bak", existing)
+}
+
+func writeAtomicStateFile(target string, payload []byte) error {
+	tmpFile, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+"-*.tmp")
 	if err != nil {
 		return fmt.Errorf("write FRP lease state: %w", err)
 	}
@@ -458,11 +531,11 @@ func (s *Store) persistLocked() error {
 	if err := tmpFile.Close(); err != nil {
 		return fmt.Errorf("write FRP lease state: %w", err)
 	}
-	if err := os.Rename(tmp, s.path); err != nil {
+	if err := os.Rename(tmp, target); err != nil {
 		return fmt.Errorf("commit FRP lease state: %w", err)
 	}
 	cleanup = false
-	_ = os.Chmod(s.path, 0o600)
+	_ = os.Chmod(target, 0o600)
 	return nil
 }
 
@@ -540,6 +613,14 @@ func (s *Store) ActiveLeaseCount(networkID, deviceID string) int {
 	}
 	return count
 }
+func leaseRecordSize(record leaseRecord) (int, error) {
+	data, err := json.Marshal(record)
+	if err != nil {
+		return 0, fmt.Errorf("measure FRP lease size: %w", err)
+	}
+	return len(data), nil
+}
+
 func (s *Store) Issue(networkID, deviceID, serverID string, rules []Rule) (LeaseResponse, error) {
 	if err := validateNetworkDevice(networkID, deviceID); err != nil {
 		return LeaseResponse{}, err
@@ -547,7 +628,7 @@ func (s *Store) Issue(networkID, deviceID, serverID string, rules []Rule) (Lease
 	if strings.TrimSpace(serverID) != s.serverID {
 		return LeaseResponse{}, fmt.Errorf("%w: server_id does not match this managed FRP server", ErrInvalid)
 	}
-	normalizedRules, err := validateRules(rules, s.limits, s.ports, s.domains, true)
+	normalizedRules, err := validateRules(rules, s.limits, s.ports, s.domains, s.subDomainHost, true)
 	if err != nil {
 		return LeaseResponse{}, err
 	}
@@ -571,9 +652,44 @@ func (s *Store) Issue(networkID, deviceID, serverID string, rules []Rule) (Lease
 		ExpiresAt:      now.Add(s.leaseTTL),
 		Proxies:        make(map[string]string),
 	}
+	recBytes, err := leaseRecordSize(record)
+	if err != nil {
+		return LeaseResponse{}, err
+	}
+	if recBytes > maxLeaseRecordBytes {
+		return LeaseResponse{}, fmt.Errorf("%w: lease exceeds per-lease byte limit", ErrQuota)
+	}
+	newProxyNames := make(map[string]struct{}, len(normalizedRules))
+	for _, rule := range normalizedRules {
+		newProxyNames[rule.ProxyName] = struct{}{}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pruneLocked(now)
+	superseded := make(map[string]leaseRecord)
+	restoreSuperseded := func() {
+		for id, orig := range superseded {
+			s.leases[id] = orig
+		}
+	}
+	for id, existing := range s.leases {
+		if existing.NetworkID != networkID || existing.DeviceID != deviceID || !s.activeAt(existing, now) {
+			continue
+		}
+		overlaps := false
+		for _, rule := range existing.Rules {
+			if _, ok := newProxyNames[rule.ProxyName]; ok {
+				overlaps = true
+				break
+			}
+		}
+		if overlaps {
+			superseded[id] = existing.clone()
+			existing.RevokedAt = &now
+			existing.LastSeen = now
+			s.leases[id] = existing
+		}
+	}
 	for i := range normalizedRules {
 		rule := &normalizedRules[i]
 		if rule.TargetKind != "mesh_peer" && rule.TargetKind != "mesh_self" {
@@ -585,26 +701,57 @@ func (s *Store) Issue(networkID, deviceID, serverID string, rules []Rule) (Lease
 				!serviceProtocolMatches(service.Protocol, rule.Type) || service.Port != rule.BindPort ||
 				service.RevokedAt != nil || !service.approved() || !now.Before(service.ExpiresAt) ||
 				(service.RequesterDeviceID != "" && service.RequesterDeviceID != deviceID) {
+				restoreSuperseded()
 				return LeaseResponse{}, fmt.Errorf("%w: target service authorization is missing, pending, denied, expired or mismatched", ErrUnauthorized)
 			}
 		} else if rule.TargetKind == "mesh_peer" {
+			restoreSuperseded()
 			return LeaseResponse{}, fmt.Errorf("%w: mesh_peer target service authorization is required", ErrUnauthorized)
 		}
 		grantID, err := newRandomSecret("grant_", 18)
 		if err != nil {
+			restoreSuperseded()
 			return LeaseResponse{}, err
 		}
 		rule.GrantID = grantID
 	}
+	// Recompute size after GrantID assignment.
+	recBytes, err = leaseRecordSize(record)
+	if err != nil {
+		restoreSuperseded()
+		return LeaseResponse{}, err
+	}
+	if recBytes > maxLeaseRecordBytes {
+		restoreSuperseded()
+		return LeaseResponse{}, fmt.Errorf("%w: lease exceeds per-lease byte limit", ErrQuota)
+	}
+	deviceBytes := recBytes
+	for _, existing := range s.leases {
+		if existing.DeviceID == deviceID && s.activeAt(existing, now) {
+			sz, szErr := leaseRecordSize(existing)
+			if szErr != nil {
+				restoreSuperseded()
+				return LeaseResponse{}, szErr
+			}
+			deviceBytes += sz
+			if deviceBytes > maxDeviceLeasesBytes {
+				restoreSuperseded()
+				return LeaseResponse{}, fmt.Errorf("%w: device lease storage limit reached", ErrQuota)
+			}
+		}
+	}
 	if len(s.leases) >= MaxPersistedLeaseRecords {
+		restoreSuperseded()
 		return LeaseResponse{}, fmt.Errorf("%w: too many persisted FRP leases", ErrQuota)
 	}
 	if err := s.checkQuotaAndConflictsLocked(record); err != nil {
+		restoreSuperseded()
 		return LeaseResponse{}, err
 	}
 	s.leases[leaseID] = record
 	if err := s.persistLocked(); err != nil {
 		delete(s.leases, leaseID)
+		restoreSuperseded()
 		return LeaseResponse{}, err
 	}
 	return record.response(capability), nil
@@ -627,7 +774,7 @@ func (s *Store) checkQuotaAndConflictsLocked(record leaseRecord) error {
 			if rule.RemotePort != 0 {
 				allPorts[rule.Type+":"+fmt.Sprint(rule.RemotePort)] = struct{}{}
 			}
-			for _, domain := range ruleDomainKeys(rule) {
+			for _, domain := range ruleDomainKeys(rule, s.subDomainHost) {
 				allDomains[domain] = struct{}{}
 			}
 		}
@@ -639,7 +786,7 @@ func (s *Store) checkQuotaAndConflictsLocked(record leaseRecord) error {
 			if rule.RemotePort != 0 {
 				devicePorts[rule.Type+":"+fmt.Sprint(rule.RemotePort)] = struct{}{}
 			}
-			for _, domain := range ruleDomainKeys(rule) {
+			for _, domain := range ruleDomainKeys(rule, s.subDomainHost) {
 				deviceDomains[domain] = struct{}{}
 			}
 		}
@@ -660,7 +807,7 @@ func (s *Store) checkQuotaAndConflictsLocked(record leaseRecord) error {
 			}
 			newPorts[key] = struct{}{}
 		}
-		for _, domain := range ruleDomainKeys(rule) {
+		for _, domain := range ruleDomainKeys(rule, s.subDomainHost) {
 			if _, exists := allDomains[domain]; exists {
 				return fmt.Errorf("%w: custom domain/subdomain is already leased", ErrConflict)
 			}
@@ -755,6 +902,9 @@ func (s *Store) issueService(networkID, deviceID, requesterDeviceID, serviceID, 
 	if ttl <= 0 {
 		ttl = DefaultRetention
 	}
+	if approvalStatus == ServiceApprovalPending && ttl > MaxPendingServiceTTL {
+		return ServiceResponse{}, fmt.Errorf("%w: pending service lifetime exceeds 24h maximum", ErrInvalid)
+	}
 	if ttl > 30*24*time.Hour {
 		return ServiceResponse{}, fmt.Errorf("%w: service lifetime exceeds maximum", ErrInvalid)
 	}
@@ -774,6 +924,40 @@ func (s *Store) issueService(networkID, deviceID, requesterDeviceID, serviceID, 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pruneLocked(now)
+	if approvalStatus == ServiceApprovalPending {
+		requesterPending := 0
+		targetPending := 0
+		for id, existing := range s.services {
+			if existing.ApprovalStatus != ServiceApprovalPending || existing.RevokedAt != nil || !now.Before(existing.ExpiresAt) {
+				continue
+			}
+			if existing.NetworkID == networkID && existing.DeviceID == deviceID && existing.RequesterDeviceID == requesterDeviceID &&
+				existing.Protocol == protocol && existing.Port == port {
+				original := existing
+				existing.Description = description
+				existing.ExpiresAt = now.Add(ttl)
+				existing.Version++
+				s.services[id] = existing
+				if err := s.persistLocked(); err != nil {
+					s.services[id] = original
+					return ServiceResponse{}, err
+				}
+				return existing.response(), nil
+			}
+			if existing.NetworkID == networkID && existing.RequesterDeviceID == requesterDeviceID {
+				requesterPending++
+			}
+			if existing.NetworkID == networkID && existing.DeviceID == deviceID {
+				targetPending++
+			}
+		}
+		if requesterPending >= MaxPendingServicesPerRequester {
+			return ServiceResponse{}, fmt.Errorf("%w: too many pending service requests for requester", ErrQuota)
+		}
+		if targetPending >= MaxPendingServicesPerTarget {
+			return ServiceResponse{}, fmt.Errorf("%w: too many pending service requests for target", ErrQuota)
+		}
+	}
 	if _, exists := s.services[serviceID]; exists {
 		return ServiceResponse{}, fmt.Errorf("%w: service id already exists", ErrConflict)
 	}

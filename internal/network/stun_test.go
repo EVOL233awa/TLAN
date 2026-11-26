@@ -110,6 +110,57 @@ func TestUDPSTUNClientProbeHonorsContext(t *testing.T) {
 	}
 }
 
+func TestSTUNGlobalBudgetNotStarvedByTwentySources(t *testing.T) {
+	if stunGlobalRatePerSecond < 200 {
+		t.Fatalf("stunGlobalRatePerSecond = %d, want >= 200", stunGlobalRatePerSecond)
+	}
+	server, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- ServeSTUN(ctx, server)
+	}()
+
+	// Send 10 STUN requests per source IP across 20 distinct loopback source IPs (200 total).
+	var txid [12]byte
+	copy(txid[:], "twenty-srcs!")
+	req := make([]byte, stunHeaderSize)
+	binary.BigEndian.PutUint16(req[0:2], stunBindingRequest)
+	binary.BigEndian.PutUint16(req[2:4], 0)
+	binary.BigEndian.PutUint32(req[4:8], stunMagicCookie)
+	copy(req[8:20], txid[:])
+
+	buf := make([]byte, 128)
+	serverAddr := server.LocalAddr().(*net.UDPAddr)
+	for i := 1; i <= 20; i++ {
+		client, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, byte(i)), Port: 0})
+		if err != nil {
+			t.Skipf("distinct loopback bind unsupported in this environment: %v", err)
+		}
+		for attempt := 0; attempt < 10; attempt++ {
+			if _, err := client.WriteToUDP(req, serverAddr); err != nil {
+				client.Close()
+				t.Fatal(err)
+			}
+			_ = client.SetReadDeadline(time.Now().Add(time.Second))
+			n, _, err := client.ReadFromUDP(buf)
+			if err != nil || n < 32 {
+				client.Close()
+				t.Fatalf("source 127.0.0.%d request %d failed (dropped by global budget?): n=%d err=%v", i, attempt+1, n, err)
+			}
+		}
+		client.Close()
+	}
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("ServeSTUN error: %v", err)
+	}
+}
+
 type testError struct{ message string }
 
 func (e *testError) Error() string { return e.message }

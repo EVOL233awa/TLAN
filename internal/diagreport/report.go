@@ -27,9 +27,10 @@ const (
 )
 
 var (
-	diagnosticPrivateKey = regexp.MustCompile(`(?s)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----`)
-	diagnosticSecretText = regexp.MustCompile(`(?i)((?:token|password|passwd|secret|capability|credential)\s*["\']?\s*[=:]\s*["\']?)([^\s&,;\"\'\\]+)`)
-	diagnosticAuth       = regexp.MustCompile(`(?i)(authorization\s*:\s*(?:(?:bearer|basic)\s+)?["\']?)[^\s,;\"\'\\]+`)
+	diagnosticPrivateKey  = regexp.MustCompile(`(?s)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----`)
+	diagnosticURLUserInfo = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://)([^/\s:@]+:[^/\s@]+@)`)
+	diagnosticSecretText  = regexp.MustCompile(`(?i)((?:token|password|passwd|secret|capability|credential|psk|api_?key|tls_?key|pre_?shared_?key|private_?key)\s*["\']?\s*[=:]\s*["\']?)([^\s&,;\"\'\\]+)`)
+	diagnosticAuth        = regexp.MustCompile(`(?i)(authorization\s*:\s*(?:(?:bearer|basic)\s+)?["\']?)[^\s,;\"\'\\]+`)
 )
 
 type validationState struct {
@@ -201,16 +202,20 @@ func sensitiveKey(key string) bool {
 	if compact == "" {
 		return false
 	}
-	for _, suffix := range []string{"token", "password", "passwd", "secret", "capability", "credential", "authorization"} {
+	for _, suffix := range []string{
+		"token", "password", "passwd", "secret", "capability", "credential", "authorization",
+		"psk", "apikey", "tlskey", "presharedkey", "privatekey",
+	} {
 		if compact == suffix || strings.HasSuffix(compact, suffix) {
 			return true
 		}
 	}
-	return compact == "privatekey" || strings.HasSuffix(compact, "privatekey")
+	return false
 }
 
 func redactText(value string) string {
 	value = diagnosticPrivateKey.ReplaceAllString(value, "[已隐藏私钥]")
+	value = diagnosticURLUserInfo.ReplaceAllString(value, "${1}[已隐藏]@")
 	value = diagnosticAuth.ReplaceAllString(value, "${1}[已隐藏]")
 	return diagnosticSecretText.ReplaceAllString(value, "${1}[已隐藏]")
 }

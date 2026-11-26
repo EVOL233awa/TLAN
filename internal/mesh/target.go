@@ -84,7 +84,8 @@ func (e *Engine) LeaseTarget(ctx context.Context, target TargetRequest) (uint64,
 		if target.PublicKey != "" && !strings.EqualFold(target.PublicKey, e.options.Member.PublicKey) {
 			return 0, nil, ErrTargetChanged
 		}
-		return e.generation, e.generationChannel(), nil
+		generation, done := e.currentLeaseState()
+		return generation, done, nil
 	}
 	peer, ok := e.peers[target.DeviceID]
 	if !ok {
@@ -97,7 +98,8 @@ func (e *Engine) LeaseTarget(ctx context.Context, target TargetRequest) (uint64,
 	if target.PublicKey != "" && !strings.EqualFold(target.PublicKey, peer.PublicKey) {
 		return 0, nil, ErrTargetChanged
 	}
-	return e.generation, e.generationChannel(), nil
+	generation, done := e.peerLeaseState(target.DeviceID)
+	return generation, done, nil
 }
 
 // LocalDeviceID returns the authenticated local member identity.
@@ -140,7 +142,8 @@ func (e *Engine) LeaseSelf(ctx context.Context, ip netip.Addr, port uint16) (uin
 	if ip != e.LocalVirtualIP() {
 		return 0, nil, ErrTargetChanged
 	}
-	return e.generation, e.generationChannel(), nil
+	generation, done := e.currentLeaseState()
+	return generation, done, nil
 }
 
 func (e *Engine) DialSelfTCP(ctx context.Context, ip netip.Addr, port uint16, generation uint64) (net.Conn, error) {

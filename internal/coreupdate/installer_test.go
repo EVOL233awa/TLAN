@@ -581,3 +581,41 @@ func TestInstallRejectsCompressedResponse(t *testing.T) {
 		t.Fatalf("compressed response error = %v", err)
 	}
 }
+
+func TestInstallRejectsDowngradeVsStateAndReverifiesBackupOnRollback(t *testing.T) {
+	body := []byte("v1-2-0-binary")
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	publicKey, privateKey := newTestKeyPair(t)
+	inst := newTestInstaller(t, root, publicKey, server.Client(), "1.0.0", "1.2.0", "windows-amd64", "frpc-test")
+	m12 := signedTestManifest(t, testManifest("1.2.0", "windows-amd64", server.URL+"/frpc", body), privateKey)
+	if _, err := inst.Install(context.Background(), m12); err != nil {
+		t.Fatal(err)
+	}
+
+	// Even if caller supplies currentVersion=1.0.0, state.Version=1.2.0 blocks installing 1.1.0.
+	instDown := newTestInstaller(t, root, publicKey, server.Client(), "1.0.0", "1.1.0", "windows-amd64", "frpc-test")
+	m11 := signedTestManifest(t, testManifest("1.1.0", "windows-amd64", server.URL+"/frpc", body), privateKey)
+	if _, err := instDown.Install(context.Background(), m11); !errors.Is(err, ErrVersionNotNewer) {
+		t.Fatalf("downgrade vs state error = %v, want ErrVersionNotNewer", err)
+	}
+
+	// Exclusive lock file prevents concurrent Install.
+	lockPath, err := safeInternalPath(root, lockFileName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lockPath, []byte("held"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	instLock := newTestInstaller(t, root, publicKey, server.Client(), "1.2.0", "1.3.0", "windows-amd64", "frpc-test")
+	m13 := signedTestManifest(t, testManifest("1.3.0", "windows-amd64", server.URL+"/frpc", body), privateKey)
+	if _, err := instLock.Install(context.Background(), m13); !errors.Is(err, ErrTargetChanged) {
+		t.Fatalf("lock contention error = %v, want ErrTargetChanged", err)
+	}
+	_ = os.Remove(lockPath)
+}

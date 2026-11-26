@@ -100,6 +100,7 @@ type meshBind struct {
 	done                  chan struct{}
 	in                    chan datagram
 	routes                map[netip.Addr]*peerRoute
+	candidateOwners       map[netip.AddrPort][]netip.Addr
 	stun                  map[[12]byte]chan stunReply
 	// onDrop is set by the engine so bind-level drops are counted with the
 	// tunnel's own counters.
@@ -114,7 +115,7 @@ func newBind(local netip.Addr, networkID, privateKey string) (*meshBind, error) 
 	if err != nil || len(key) != 32 {
 		return nil, errors.New("invalid private key")
 	}
-	return &meshBind{local: local, networkID: networkID, private: key, routes: make(map[netip.Addr]*peerRoute), stun: make(map[[12]byte]chan stunReply)}, nil
+	return &meshBind{local: local, networkID: networkID, private: key, routes: make(map[netip.Addr]*peerRoute), candidateOwners: make(map[netip.AddrPort][]netip.Addr), stun: make(map[[12]byte]chan stunReply)}, nil
 }
 func (b *meshBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 	b.mu.Lock()
@@ -373,10 +374,11 @@ func (b *meshBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 			}
 		}
 		wrote := false
-		for _, u := range sockets {
-			for _, address := range candidates {
+		for _, address := range candidates {
+			for _, u := range sockets {
 				if _, err := u.WriteToUDPAddrPort(packet, address); err == nil {
 					wrote = true
+					break
 				}
 			}
 		}
@@ -392,17 +394,10 @@ func (b *meshBind) attributePeer(addr netip.AddrPort, socketIndex int) netip.Add
 	defer b.mu.RUnlock()
 	var directPeer netip.Addr
 	directMatches := 0
-	var candidatePeer netip.Addr
-	candidateMatches := 0
 	for ip, r := range b.routes {
 		if r.direct == addr && (r.directSocket < 0 || r.directSocket == socketIndex) {
 			directPeer = ip
 			directMatches++
-			continue
-		}
-		if containsAddrPort(r.candidates, addr) {
-			candidatePeer = ip
-			candidateMatches++
 		}
 	}
 	if directMatches == 1 {
@@ -410,6 +405,21 @@ func (b *meshBind) attributePeer(addr netip.AddrPort, socketIndex int) netip.Add
 	}
 	if directMatches > 1 {
 		return netip.Addr{}
+	}
+	if b.candidateOwners != nil {
+		owners := b.candidateOwners[addr]
+		if len(owners) == 1 {
+			return owners[0]
+		}
+		return netip.Addr{}
+	}
+	var candidatePeer netip.Addr
+	candidateMatches := 0
+	for ip, r := range b.routes {
+		if containsAddrPort(r.candidates, addr) {
+			candidatePeer = ip
+			candidateMatches++
+		}
 	}
 	if candidateMatches == 1 {
 		return candidatePeer
@@ -457,6 +467,7 @@ func (b *meshBind) updatePeer(ip netip.Addr, publicKey string, candidates []neti
 		b.routes[ip] = r
 	}
 	r.candidates = append([]netip.AddrPort(nil), candidates...)
+	b.rebuildCandidateOwnersLocked()
 	return nil
 }
 func (b *meshBind) removePeer(ip netip.Addr) {
@@ -466,6 +477,20 @@ func (b *meshBind) removePeer(ip netip.Addr) {
 		r.relay.Close()
 	}
 	delete(b.routes, ip)
+	b.rebuildCandidateOwnersLocked()
+}
+
+func (b *meshBind) rebuildCandidateOwnersLocked() {
+	if b.candidateOwners == nil {
+		b.candidateOwners = make(map[netip.AddrPort][]netip.Addr)
+	} else {
+		clear(b.candidateOwners)
+	}
+	for ip, r := range b.routes {
+		for _, addr := range r.candidates {
+			b.candidateOwners[addr] = append(b.candidateOwners[addr], ip)
+		}
+	}
 }
 func (b *meshBind) hasRelay(ip netip.Addr, minRemaining time.Duration) bool {
 	b.mu.RLock()

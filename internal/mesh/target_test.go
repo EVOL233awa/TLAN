@@ -92,3 +92,54 @@ func TestAdvanceGenerationClosesTargetDone(t *testing.T) {
 	default:
 	}
 }
+
+func TestUnrelatedPeerChangeDoesNotInvalidateTargetLease(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e := &Engine{
+		ctx: ctx,
+		options: Options{
+			Network:  clientapi.Network{ID: "net-a"},
+			Identity: clientidentity.Identity{DeviceID: "dev-a"},
+		},
+		peers: map[string]clientapi.Device{
+			"dev-b": {ID: "dev-b", VirtualIP: "10.240.0.5", PublicKey: "public-b"},
+			"dev-c": {ID: "dev-c", VirtualIP: "10.240.0.6", PublicKey: "public-c"},
+		},
+		generation:     1,
+		generationDone: make(chan struct{}),
+		peerDone:       make(map[string]chan struct{}),
+		peerGen:        make(map[string]uint64),
+	}
+	reqB := TargetRequest{NetworkID: "net-a", DeviceID: "dev-b", IPv4: netip.MustParseAddr("10.240.0.5"), Port: 22, ServiceID: "svc-b"}
+	reqC := TargetRequest{NetworkID: "net-a", DeviceID: "dev-c", IPv4: netip.MustParseAddr("10.240.0.6"), Port: 22, ServiceID: "svc-c"}
+	genB, doneB, err := e.LeaseTarget(context.Background(), reqB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	genC, doneC, err := e.LeaseTarget(context.Background(), reqC)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e.invalidatePeers([]string{"dev-c"})
+
+	select {
+	case <-doneC:
+	case <-time.After(time.Second):
+		t.Fatal("changed peer done channel did not close")
+	}
+	select {
+	case <-doneB:
+		t.Fatal("unrelated peer done channel closed unexpectedly")
+	default:
+	}
+	genBAfter, _, err := e.LeaseTarget(context.Background(), reqB)
+	if err != nil || genBAfter != genB {
+		t.Fatalf("unrelated peer generation changed: got %d, want %d (err=%v)", genBAfter, genB, err)
+	}
+	genCAfter, _, err := e.LeaseTarget(context.Background(), reqC)
+	if err != nil || genCAfter <= genC {
+		t.Fatalf("changed peer generation did not advance: got %d, was %d (err=%v)", genCAfter, genC, err)
+	}
+}

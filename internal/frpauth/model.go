@@ -38,11 +38,14 @@ const (
 	DefaultMaxDomainsPerRule   = 16
 	DefaultRetention           = 24 * time.Hour
 
-	ServiceApprovalPending     = "pending"
-	ServiceApprovalApproved    = "approved"
-	ServiceApprovalDenied      = "denied"
-	MaxPersistedLeaseRecords   = 4096
-	MaxPersistedServiceRecords = 4096
+	ServiceApprovalPending       = "pending"
+	ServiceApprovalApproved      = "approved"
+	ServiceApprovalDenied        = "denied"
+	MaxPendingServiceTTL         = 24 * time.Hour
+	MaxPendingServicesPerRequester = 8
+	MaxPendingServicesPerTarget  = 16
+	MaxPersistedLeaseRecords     = 4096
+	MaxPersistedServiceRecords   = 4096
 	MaxCapabilityBytes         = 128
 	MaxProxyNameLength         = 128
 	MaxRuleIDLength            = 64
@@ -185,6 +188,7 @@ type Options struct {
 	Limits         Limits
 	AllowedPorts   []PortRange
 	AllowedDomains []string
+	SubDomainHost  string
 }
 
 // LoginRequest is the normalized identity information extracted from FRPS's
@@ -373,7 +377,7 @@ func normalizeLimits(l Limits) (Limits, error) {
 	return l, nil
 }
 
-func normalizeRule(rule Rule, allowedPorts []PortRange, allowedDomains []string, maxDomains int, enforcePolicy bool) (Rule, error) {
+func normalizeRule(rule Rule, allowedPorts []PortRange, allowedDomains []string, subDomainHost string, maxDomains int, enforcePolicy bool) (Rule, error) {
 	rule.ID = strings.TrimSpace(rule.ID)
 	rule.ProxyName = strings.TrimSpace(rule.ProxyName)
 	rule.Type = strings.ToLower(strings.TrimSpace(rule.Type))
@@ -449,7 +453,7 @@ func normalizeRule(rule Rule, allowedPorts []PortRange, allowedDomains []string,
 		if len(rule.CustomDomains) == 0 && rule.SubDomain == "" {
 			return Rule{}, fmt.Errorf("%w: http/https/tcpmux requires custom_domains or subdomain", ErrInvalid)
 		}
-		if err := normalizeRuleDomains(&rule, allowedDomains, maxDomains, enforcePolicy); err != nil {
+		if err := normalizeRuleDomains(&rule, allowedDomains, subDomainHost, maxDomains, enforcePolicy); err != nil {
 			return Rule{}, err
 		}
 		if rule.Type == "https" {
@@ -477,15 +481,29 @@ func normalizeRule(rule Rule, allowedPorts []PortRange, allowedDomains []string,
 	return rule, nil
 }
 
-func ruleDomainKeys(rule Rule) []string {
-	out := append([]string(nil), rule.CustomDomains...)
+func ruleDomainKeys(rule Rule, subDomainHost string) []string {
+	out := make([]string, 0, len(rule.CustomDomains)+1)
+	seen := make(map[string]struct{}, len(rule.CustomDomains)+1)
+	for _, domain := range rule.CustomDomains {
+		if _, ok := seen[domain]; ok {
+			continue
+		}
+		seen[domain] = struct{}{}
+		out = append(out, domain)
+	}
 	if rule.SubDomain != "" {
-		out = append(out, "@"+rule.SubDomain)
+		key := "@" + rule.SubDomain
+		if subDomainHost != "" {
+			key = rule.SubDomain + "." + subDomainHost
+		}
+		if _, ok := seen[key]; !ok {
+			out = append(out, key)
+		}
 	}
 	return out
 }
 
-func normalizeRuleDomains(rule *Rule, allowedDomains []string, maxDomains int, enforcePolicy bool) error {
+func normalizeRuleDomains(rule *Rule, allowedDomains []string, subDomainHost string, maxDomains int, enforcePolicy bool) error {
 	if len(rule.CustomDomains) > MaxCustomDomainsPerRequest || (enforcePolicy && len(rule.CustomDomains) > maxDomains) {
 		return fmt.Errorf("%w: too many custom_domains", ErrQuota)
 	}
@@ -510,6 +528,12 @@ func normalizeRuleDomains(rule *Rule, allowedDomains []string, maxDomains int, e
 	if rule.SubDomain != "" {
 		if err := validateSubdomainLabel(rule.SubDomain); err != nil {
 			return err
+		}
+		if subDomainHost != "" {
+			fqdn := rule.SubDomain + "." + subDomainHost
+			if enforcePolicy && !domainAllowed(fqdn, allowedDomains) {
+				return fmt.Errorf("%w: subdomain is not allowed", ErrInvalid)
+			}
 		}
 		if enforcePolicy && len(rule.CustomDomains)+1 > maxDomains {
 			return fmt.Errorf("%w: too many custom_domains/subdomain", ErrQuota)
@@ -731,7 +755,7 @@ func validFRPName(value string) bool {
 	return true
 }
 
-func validateRules(rules []Rule, limits Limits, allowedPorts []PortRange, allowedDomains []string, enforcePolicy bool) ([]Rule, error) {
+func validateRules(rules []Rule, limits Limits, allowedPorts []PortRange, allowedDomains []string, subDomainHost string, enforcePolicy bool) ([]Rule, error) {
 	if len(rules) == 0 {
 		return nil, fmt.Errorf("%w: at least one rule is required", ErrInvalid)
 	}
@@ -744,7 +768,7 @@ func validateRules(rules []Rule, limits Limits, allowedPorts []PortRange, allowe
 	ports := make(map[string]struct{}, len(rules))
 	domains := make(map[string]struct{}, len(rules))
 	for _, raw := range rules {
-		rule, err := normalizeRule(raw, allowedPorts, allowedDomains, limits.MaxDomainsPerRule, enforcePolicy)
+		rule, err := normalizeRule(raw, allowedPorts, allowedDomains, subDomainHost, limits.MaxDomainsPerRule, enforcePolicy)
 		if err != nil {
 			return nil, err
 		}
@@ -763,7 +787,7 @@ func validateRules(rules []Rule, limits Limits, allowedPorts []PortRange, allowe
 			}
 			ports[key] = struct{}{}
 		}
-		for _, domain := range ruleDomainKeys(rule) {
+		for _, domain := range ruleDomainKeys(rule, subDomainHost) {
 			if _, ok := domains[domain]; ok {
 				return nil, fmt.Errorf("%w: duplicate custom domain/subdomain", ErrInvalid)
 			}
