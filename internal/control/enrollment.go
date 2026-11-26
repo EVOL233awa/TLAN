@@ -94,17 +94,10 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUpgradeRequired, err.Error())
 		return
 	}
-	if !s.allowEnrollment(r) {
-		w.Header().Set("Retry-After", "60")
-		writeError(w, 429, "too many join attempts")
-		return
-	}
-	s.joinSlotsOnce.Do(func() { s.joinSlots = make(chan struct{}, 2) })
-	select {
-	case s.joinSlots <- struct{}{}:
-		defer func() { <-s.joinSlots }()
-	default:
-		writeError(w, 429, "too many join attempts")
+	// The member paths apply min_client_version; enrollment must too, or an
+	// outdated client can take a device slot and only fail on every later call.
+	if err := s.clientVersionAllowed(reportedVersion); err != nil {
+		writeError(w, http.StatusUpgradeRequired, err.Error())
 		return
 	}
 	var req struct {
@@ -114,7 +107,25 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	// Admin codes bypass the per-IP join budget and the concurrency slots. The
+	// public bucket is shared behind a reverse proxy, so an attacker who fills
+	// it must not lock operators out of emergency enrollment.
 	admin := s.adminTokenMatches(req.Code)
+	if !admin {
+		if !s.allowEnrollment(r) {
+			w.Header().Set("Retry-After", "60")
+			writeError(w, 429, "too many join attempts")
+			return
+		}
+		s.joinSlotsOnce.Do(func() { s.joinSlots = make(chan struct{}, 2) })
+		select {
+		case s.joinSlots <- struct{}{}:
+			defer func() { <-s.joinSlots }()
+		default:
+			writeError(w, 429, "too many join attempts")
+			return
+		}
+	}
 	if s.DisableEnrollment && !admin {
 		writeError(w, 503, "private enrollment is disabled")
 		return

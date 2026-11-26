@@ -62,6 +62,12 @@ func TestServerRefusesOutdatedClients(t *testing.T) {
 		t.Fatal(err)
 	}
 	api := clientapi.New(server.URL, "")
+	// Enrollment applies the same minimum as member calls: a client that
+	// reports nothing cannot prove it is current.
+	if _, err := api.Enroll("friends-secret-code", identity.RegisterRequest(), identity.PrivateKey); err == nil {
+		t.Fatal("enrollment accepted a client that reported no version")
+	}
+	api.AgentVersion = "v0.7.0"
 	membership, err := api.Enroll("friends-secret-code", identity.RegisterRequest(), identity.PrivateKey)
 	if err != nil {
 		t.Fatal(err)
@@ -71,6 +77,7 @@ func TestServerRefusesOutdatedClients(t *testing.T) {
 
 	// A client that predates this feature reports nothing, so it cannot prove
 	// it is current and must not be served.
+	api.AgentVersion = ""
 	if _, err := api.Heartbeat(deviceID); err == nil {
 		t.Fatal("gate let an unreported client through")
 	}
