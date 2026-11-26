@@ -24,6 +24,10 @@ var ErrNetworkFull = errors.New("network address pool is full")
 var ErrConflict = errors.New("resource conflict")
 var ErrBlocked = errors.New("device is blocked")
 
+// clientVersionPersistInterval bounds how often one device's version change
+// rewrites the state file.
+const clientVersionPersistInterval = time.Minute
+
 type PortRange struct {
 	Start int `json:"start"`
 	End   int `json:"end"`
@@ -123,6 +127,7 @@ type Store struct {
 	data                 State
 	committed            []byte
 	lastHeartbeatPersist time.Time
+	lastVersionPersist   map[string]time.Time
 }
 
 func (s *Store) CreateNetwork(name, password, cidr string) (NetworkSummary, error) {
@@ -568,6 +573,17 @@ func (s *Store) SetClientVersion(deviceID core.DeviceID, version string) error {
 	}
 	device.ClientVersion = version
 	s.data.Devices[deviceID.String()] = device
+	// Persist at most once per interval per device. The in-memory value is
+	// already current, and the next heartbeat persist flushes it, so a member
+	// flipping the header cannot force a state rewrite per request.
+	key := deviceID.String()
+	if last, ok := s.lastVersionPersist[key]; ok && time.Since(last) < clientVersionPersistInterval {
+		return nil
+	}
+	if s.lastVersionPersist == nil {
+		s.lastVersionPersist = make(map[string]time.Time)
+	}
+	s.lastVersionPersist[key] = time.Now()
 	return s.persistLocked()
 }
 

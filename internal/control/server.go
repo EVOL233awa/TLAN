@@ -130,6 +130,8 @@ func (s *Server) auth(next http.Handler) http.Handler {
 		if credential, ok := s.Store.AuthenticateMember(token); ok && (frpRouteAllowed(r) || memberRouteAllowed(r, credential)) {
 			reported := strings.TrimSpace(r.Header.Get(clientVersionHeader))
 			if reported != "" {
+				// Record before the gate so operators can see which version a
+				// rejected client reported. SetClientVersion throttles writes.
 				_ = s.Store.SetClientVersion(core.DeviceID(credential.DeviceID), reported)
 			}
 			if err := s.checkMajorMinor(reported); err != nil {
@@ -454,12 +456,23 @@ func (s *Server) networkDevice(w http.ResponseWriter, r *http.Request, networkID
 				return
 			}
 			candidates := req.Candidates[:0]
+			invalid := 0
+			var firstAddress string
+			var firstErr error
 			for _, candidate := range req.Candidates {
 				if err := candidate.Validate(); err != nil {
-					slog.Warn("discarding invalid candidate", "network", nid.String(), "device", did.String(), "address", candidate.Address, "error", err)
+					invalid++
+					if firstErr == nil {
+						firstAddress, firstErr = candidate.Address, err
+					}
 					continue
 				}
 				candidates = append(candidates, candidate)
+			}
+			// One aggregated line per request: logging each rejected candidate
+			// let a 6 KiB body produce thousands of log records.
+			if invalid > 0 {
+				slog.Warn("discarding invalid candidates", "network", nid.String(), "device", did.String(), "count", invalid, "first_address", firstAddress, "first_error", firstErr)
 			}
 			record, err := s.Store.SetCandidates(nid, did, candidates)
 			if err != nil {
