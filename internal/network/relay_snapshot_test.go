@@ -21,19 +21,19 @@ func TestRelaySnapshotOmitsSecretAndDisconnectDeviceClosesOnlyTarget(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := broker.Attach(first, core.DeviceID("device-a"))
+	a, err := broker.Attach(first.TicketFor(core.DeviceID("device-a")), core.DeviceID("device-a"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := broker.Attach(first, core.DeviceID("device-b"))
+	b, err := broker.Attach(first.TicketFor(core.DeviceID("device-b")), core.DeviceID("device-b"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := broker.Attach(second, core.DeviceID("device-c"))
+	c, err := broker.Attach(second.TicketFor(core.DeviceID("device-c")), core.DeviceID("device-c"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, err := broker.Attach(second, core.DeviceID("device-d"))
+	d, err := broker.Attach(second.TicketFor(core.DeviceID("device-d")), core.DeviceID("device-d"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,17 +74,17 @@ func TestRelayAttachTakeoverClosesOldConnectionAndForwardsNew(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldA, err := broker.Attach(ticket, core.DeviceID("device-a"))
+	oldA, err := broker.Attach(ticket.TicketFor(core.DeviceID("device-a")), core.DeviceID("device-a"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := broker.Attach(ticket, core.DeviceID("device-b"))
+	b, err := broker.Attach(ticket.TicketFor(core.DeviceID("device-b")), core.DeviceID("device-b"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer b.Close()
 
-	newA, err := broker.Attach(ticket, core.DeviceID("device-a"))
+	newA, err := broker.Attach(ticket.TicketFor(core.DeviceID("device-a")), core.DeviceID("device-a"))
 	if err != nil {
 		t.Fatalf("re-attach takeover failed: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestRelayServerTakeoverKeepsSessionAndPeerAlive(t *testing.T) {
 		go func() {
 			errCh <- srv.ServeConn(serverConn)
 		}()
-		if err := json.NewEncoder(clientConn).Encode(RelayHandshake{Ticket: ticket, Device: device}); err != nil {
+		if err := json.NewEncoder(clientConn).Encode(RelayHandshake{Ticket: ticket.TicketFor(device), Device: device}); err != nil {
 			t.Fatal(err)
 		}
 		line, err := readHandshakeLine(clientConn, 4096)

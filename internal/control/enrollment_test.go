@@ -117,12 +117,22 @@ func TestPrivatePasscodeMembershipAndPowerPermissions(t *testing.T) {
 		connection.Close()
 		t.Fatal("member impersonated relay endpoint")
 	}
+	// Each endpoint requests its own side; the server hands out per-device
+	// secrets so a ticket cannot be replayed by the other endpoint.
+	ticketB, err := apis[1].CreateRelaySession(core.NetworkID(n.ID), identities[1].DeviceID, identities[0].DeviceID, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ticketB.SessionID != ticket.SessionID || ticketB.Secret == ticket.Secret {
+		t.Fatalf("expected the cached session with a distinct endpoint secret: %+v", ticketB)
+	}
+	relayTicketB := network.RelayTicket{SessionID: ticketB.SessionID, Source: ticketB.Source, Target: ticketB.Target, Secret: ticketB.Secret, ExpiresAt: ticketB.ExpiresAt}
 	c1, err := network.DialHTTPRelay(ctx, server.URL, apis[0].Token, relayTicket, identities[0].DeviceID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c1.Close()
-	c2, err := network.DialHTTPRelay(ctx, server.URL, apis[1].Token, relayTicket, identities[1].DeviceID)
+	c2, err := network.DialHTTPRelay(ctx, server.URL, apis[1].Token, relayTicketB, identities[1].DeviceID)
 	if err != nil {
 		t.Fatal(err)
 	}

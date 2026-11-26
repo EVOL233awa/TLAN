@@ -44,8 +44,9 @@ type Server struct {
 	FRP              *frpauth.Store
 	FRPBootstrap     func() (FRPBootstrapConfig, error)
 	relayMu          sync.Mutex
-	relaySlotsOnce   sync.Once
-	relaySlots       chan struct{}
+	relayStreamMu    sync.Mutex
+	relayStreamTotal int
+	relayStreams     map[core.DeviceID]int
 	relayPairs       map[string]network.RelayTicket
 }
 
@@ -214,6 +215,10 @@ func (s *Server) relaySessions(w http.ResponseWriter, r *http.Request) {
 	if req.TTLSeconds > 0 {
 		ttl = time.Duration(req.TTLSeconds) * time.Second
 	}
+	callerDevice := source
+	if credential, ok := memberIdentity(r); ok {
+		callerDevice = core.DeviceID(credential.DeviceID)
+	}
 	s.relayMu.Lock()
 	defer s.relayMu.Unlock()
 	if s.relayPairs == nil {
@@ -230,7 +235,7 @@ func (s *Server) relaySessions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if ticket, ok := s.relayPairs[pairKey]; ok {
-		writeJSON(w, http.StatusCreated, ticket)
+		writeJSON(w, http.StatusCreated, ticket.TicketFor(callerDevice))
 		return
 	}
 	ticket, err := s.Relay.CreateSession(source, target, ttl)
@@ -243,7 +248,7 @@ func (s *Server) relaySessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.relayPairs[pairKey] = ticket
-	writeJSON(w, http.StatusCreated, ticket)
+	writeJSON(w, http.StatusCreated, ticket.TicketFor(callerDevice))
 }
 
 func (s *Server) networks(w http.ResponseWriter, r *http.Request) {
