@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/private-radminlan/lanmesh/core"
 )
 
 func TestRelayHandshakeCancellation(t *testing.T) {
@@ -87,7 +89,11 @@ func TestSuccessfulRelayOutlivesDialContext(t *testing.T) {
 		defer conn.Close()
 		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 		reader := bufio.NewReader(conn)
-		if _, err := http.ReadRequest(reader); err != nil {
+		req, err := http.ReadRequest(reader)
+		if err != nil {
+			return
+		}
+		if req.Header.Get("X-Client-Version") != core.CurrentVersion {
 			return
 		}
 		_, _ = io.WriteString(conn, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: lanmesh-relay\r\n\r\n")

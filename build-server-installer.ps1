@@ -24,8 +24,12 @@ if (-not (Test-Path $CaddyArchive)) {
 if ((Get-FileHash -Algorithm SHA512 $CaddyArchive).Hash.ToLowerInvariant() -ne $caddySha512) {
     throw "Caddy archive SHA512 mismatch: $CaddyArchive"
 }
-tar -xzf $CaddyArchive -C $payload caddy
+New-Item -ItemType Directory -Force (Join-Path $payload 'licenses') | Out-Null
+tar -xzf $CaddyArchive -C $payload caddy LICENSE
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path "$payload\caddy")) { throw 'Failed to extract caddy binary.' }
+Copy-Item -Force (Join-Path $root 'assets\frp\licenses\FRP-LICENSE.txt') (Join-Path $payload 'licenses\FRP-LICENSE.txt')
+Copy-Item -Force (Join-Path $root 'THIRD-PARTY-NOTICES.md') (Join-Path $payload 'licenses\THIRD-PARTY-NOTICES.md')
+Move-Item -Force (Join-Path $payload 'LICENSE') (Join-Path $payload 'licenses\caddy-Apache-2.0.txt')
 
 $env:GOOS = 'linux'; $env:GOARCH = 'amd64'; $env:CGO_ENABLED = '0'
 try {
@@ -37,21 +41,28 @@ try {
     Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED -ErrorAction SilentlyContinue
 }
 
+$tarItems = @('tlan-server', 'caddy', 'install-helper', 'Caddyfile', 'tlan.service', 'tlan-https.service', 'tlan-graceful-restart.sh', 'licenses')
 foreach ($item in @(
-    @{Src='deploy\Caddyfile'; Dst='Caddyfile'},
-    @{Src='deploy\systemd\tlan.service'; Dst='tlan.service'},
-    @{Src='deploy\systemd\tlan-https.service'; Dst='tlan-https.service'},
-    @{Src='deploy\systemd\tlan-graceful-restart.sh'; Dst='tlan-graceful-restart.sh'}
+    @{Src='deploy\Caddyfile'; Dst='Caddyfile'; Optional=$false},
+    @{Src='deploy\systemd\tlan.service'; Dst='tlan.service'; Optional=$false},
+    @{Src='deploy\systemd\tlan-https.service'; Dst='tlan-https.service'; Optional=$false},
+    @{Src='deploy\systemd\tlan-graceful-restart.sh'; Dst='tlan-graceful-restart.sh'; Optional=$false},
+    @{Src='docs\INSTALL-LINUX.md'; Dst='INSTALL-LINUX.md'; Optional=$true},
+    @{Src='docs\IP-DEPLOYMENT.md'; Dst='IP-DEPLOYMENT.md'; Optional=$true}
 )) {
     $srcPath = Join-Path $root $item.Src
+    if ($item.Optional -and -not (Test-Path $srcPath)) {
+        continue
+    }
     $dstPath = Join-Path $payload $item.Dst
     $text = [IO.File]::ReadAllText($srcPath) -replace "`r`n", "`n"
     [IO.File]::WriteAllText($dstPath, $text, [Text.UTF8Encoding]::new($false))
+    if ($item.Optional) { $tarItems += $item.Dst }
 }
 
 $archive = Join-Path $tmp 'server-payload.tar.gz'
 Remove-Item -Force $archive -ErrorAction SilentlyContinue
-tar -czf $archive -C $payload tlan-server caddy install-helper Caddyfile tlan.service tlan-https.service tlan-graceful-restart.sh
+& tar -czf $archive -C $payload @tarItems
 if ($LASTEXITCODE -ne 0) { throw 'Failed to create installer payload archive.' }
 $archiveBytes = [IO.File]::ReadAllBytes($archive)
 $payloadSha256 = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()

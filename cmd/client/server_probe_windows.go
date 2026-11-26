@@ -306,7 +306,7 @@ func formatProbeSpanText(seconds int) string {
 }
 
 func (a *desktop) refreshServerMetricsDisplay() {
-	if a == nil || a.serverProbe == nil {
+	if a == nil || a.serverProbe == nil || a.inSizeMove.Load() {
 		return
 	}
 	samples, stats := a.serverProbe.Snapshot()

@@ -59,6 +59,9 @@ Copy-Item -Force (Join-Path $root 'deploy\Caddyfile') (Join-Path $stagingDir 'Ca
 Copy-Item -Force (Join-Path $root 'deploy\systemd\tlan.service') (Join-Path $stagingDir 'systemd\tlan.service')
 Copy-Item -Force (Join-Path $root 'deploy\systemd\tlan-https.service') (Join-Path $stagingDir 'systemd\tlan-https.service')
 Copy-Item -Force (Join-Path $root 'deploy\systemd\tlan-graceful-restart.sh') (Join-Path $stagingDir 'systemd\tlan-graceful-restart.sh')
+if (Test-Path (Join-Path $root 'docs\INSTALL-LINUX.md')) {
+    Copy-Item -Force (Join-Path $root 'docs\INSTALL-LINUX.md') (Join-Path $stagingDir 'INSTALL-LINUX.md')
+}
 
 Remove-Item -Force -ErrorAction SilentlyContinue $zipPath
 Compress-Archive -Path (Join-Path $stagingDir '*') -DestinationPath $zipPath

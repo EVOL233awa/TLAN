@@ -30,7 +30,7 @@ try {
     if ((Get-FileHash -Algorithm SHA256 $path).Hash.ToLowerInvariant() -ne $expectedFull) { throw 'Installer checksum mismatch.' }
     tar -xzf $archive -C $verify
     if ($LASTEXITCODE -ne 0) { throw 'Payload extraction failed.' }
-    foreach ($name in @('tlan-server','caddy','install-helper','Caddyfile','tlan.service','tlan-https.service','tlan-graceful-restart.sh')) {
+    foreach ($name in @('tlan-server','caddy','install-helper','Caddyfile','tlan.service','tlan-https.service','tlan-graceful-restart.sh','licenses/FRP-LICENSE.txt','licenses/THIRD-PARTY-NOTICES.md','licenses/caddy-Apache-2.0.txt')) {
         $stagedHash = (Get-FileHash -Algorithm SHA256 ".tmp-build/server-installer-payload/$name").Hash
         if ((Get-FileHash -Algorithm SHA256 "$verify/$name").Hash -ne $stagedHash) { throw "Payload differs from build output: $name" }
     }

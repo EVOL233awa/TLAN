@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 func Open(path string) (*Store, error) {
@@ -20,11 +22,67 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("read state: %w", err)
 	}
 	if err := json.Unmarshal(contents, &s.data); err != nil {
+		bakPath := path + ".bak"
+		bakContents, bakErr := os.ReadFile(bakPath)
+		if bakErr == nil {
+			var recovered State
+			if json.Unmarshal(bakContents, &recovered) == nil {
+				corruptPath := fmt.Sprintf("%s.corrupt.%d", path, time.Now().Unix())
+				_ = os.Rename(path, corruptPath)
+				slog.Warn("state file corrupt; recovered from backup", "path", path, "corrupt_backup", corruptPath, "error", err)
+				s.data = recovered
+				normalizeState(&s.data)
+				s.committed, _ = json.Marshal(s.data)
+				if persistErr := s.persistLocked(); persistErr != nil {
+					return nil, fmt.Errorf("restore state from backup: %w", persistErr)
+				}
+				return s, nil
+			}
+		}
 		return nil, fmt.Errorf("decode state: %w", err)
 	}
 	normalizeState(&s.data)
 	s.committed, _ = json.Marshal(s.data)
 	return s, nil
+}
+
+func writeDurableFile(targetPath string, contents []byte) error {
+	dir := filepath.Dir(targetPath)
+	tmpFile, err := os.CreateTemp(dir, "."+filepath.Base(targetPath)+"-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmpFile.Chmod(0o600); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if _, err := tmpFile.Write(contents); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, targetPath); err != nil {
+		return err
+	}
+	cleanup = false
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
 }
 
 func (s *Store) persistLocked() (err error) {
@@ -45,11 +103,10 @@ func (s *Store) persistLocked() (err error) {
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, contents, 0o600); err != nil {
-		return err
+	if _, statErr := os.Stat(s.path); statErr == nil && len(s.committed) > 0 {
+		_ = writeDurableFile(s.path+".bak", s.committed)
 	}
-	if err = os.Rename(tmp, s.path); err != nil {
+	if err := writeDurableFile(s.path, contents); err != nil {
 		return err
 	}
 	s.committed = append([]byte(nil), contents...)

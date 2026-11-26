@@ -1,7 +1,7 @@
 param(
     [string]$ServerURL = '',
     [string]$STUNAddress = '',
-    [string]$Version = '1.1.0'
+    [string]$Version = '1.2.0'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,6 +24,13 @@ $frpcPath = Join-Path $root 'assets\frp\windows-amd64\frpc.exe'
 $frpLicensePath = Join-Path $root 'assets\frp\licenses\FRP-LICENSE.txt'
 $expectedWintunSHA256 = 'E5DA8447DC2C320EDC0FC52FA01885C103DE8C118481F683643CACC3220DAFCE'
 $expectedFrpcSHA256 = '509F4FA082BF9B85F9AD27B45D37A89A8ACCB011F3B724CFF352DFAC90A94FEB'
+
+if (-not (Test-Path $frpcPath)) {
+    & (Join-Path $root 'scripts\fetch-frp-core.ps1')
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Failed to fetch required frpc.exe binary.'
+    }
+}
 
 foreach ($required in @($iconPath, $manifestPath, $winresJsonPath, $wintunPath, $frpcPath)) {
     if (-not (Test-Path $required)) {

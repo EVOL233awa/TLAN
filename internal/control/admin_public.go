@@ -18,7 +18,10 @@ func (s *Server) allowPublicAdminAttempt(ip string) bool {
 			delete(s.publicAdminAttempts, key)
 		}
 	}
-	window := s.publicAdminAttempts[ip]
+	window, exists := s.publicAdminAttempts[ip]
+	if !exists && len(s.publicAdminAttempts) >= adminAttemptCap {
+		return false
+	}
 	if window.start.IsZero() || now.Sub(window.start) >= adminLoginWindow {
 		window = adminWindow{start: now}
 	}
@@ -34,7 +37,18 @@ func (s *Server) notePublicAdminFailure(ip string) {
 	now := time.Now()
 	s.publicAdminMu.Lock()
 	defer s.publicAdminMu.Unlock()
-	window := s.publicAdminAttempts[ip]
+	if s.publicAdminAttempts == nil {
+		s.publicAdminAttempts = make(map[string]adminWindow)
+	}
+	for key, window := range s.publicAdminAttempts {
+		if now.Sub(window.start) >= adminLoginWindow {
+			delete(s.publicAdminAttempts, key)
+		}
+	}
+	window, exists := s.publicAdminAttempts[ip]
+	if !exists && len(s.publicAdminAttempts) >= adminAttemptCap {
+		return
+	}
 	if window.start.IsZero() || now.Sub(window.start) >= adminLoginWindow {
 		window = adminWindow{start: now}
 	}

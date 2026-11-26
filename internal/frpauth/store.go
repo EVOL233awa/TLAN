@@ -177,6 +177,12 @@ func normalizeAllowedDomains(values []string) ([]string, error) {
 	return out, nil
 }
 
+const (
+	maxPersistedStateBytes    = 8 * 1024 * 1024
+	maxPersistedLoadBytes     = 32 * 1024 * 1024
+	maxRetainedInactiveLeases = 512
+)
+
 func (s *Store) load() error {
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -185,9 +191,10 @@ func (s *Store) load() error {
 	if err != nil {
 		return fmt.Errorf("read FRP lease state: %w", err)
 	}
-	if len(data) > 8*1024*1024 {
+	if len(data) > maxPersistedLoadBytes {
 		return fmt.Errorf("%w: FRP lease state exceeds size limit", ErrInvalid)
 	}
+	oversized := len(data) > maxPersistedStateBytes
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var state persistedState
@@ -231,8 +238,16 @@ func (s *Store) load() error {
 		}
 		s.services[service.ID] = service
 	}
+	if oversized {
+		s.pruneLocked(s.now().UTC())
+	}
 	if err := s.reconcileLoadedPolicyLocked(); err != nil {
 		return err
+	}
+	if oversized {
+		if err := s.persistLocked(); err != nil {
+			return err
+		}
 	}
 	_ = os.Chmod(s.path, 0o600)
 	return nil
@@ -365,7 +380,7 @@ func (s *Store) validateLoadedRecord(record leaseRecord) error {
 	return nil
 }
 
-func (s *Store) persistLocked() error {
+func (s *Store) buildPersistedState() persistedState {
 	state := persistedState{
 		SchemaVersion: SchemaVersion,
 		Leases:        make([]leaseRecord, 0, len(s.leases)),
@@ -389,23 +404,70 @@ func (s *Store) persistLocked() error {
 		}
 		return state.Services[i].CreatedAt.Before(state.Services[j].CreatedAt)
 	})
-	data, err := json.MarshalIndent(state, "", "  ")
+	return state
+}
+
+func (s *Store) persistLocked() error {
+	data, err := json.MarshalIndent(s.buildPersistedState(), "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode FRP lease state: %w", err)
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
+	payload := append(data, '\n')
+	if len(payload) > maxPersistedStateBytes {
+		now := s.now().UTC()
+		for id, record := range s.leases {
+			if !s.activeAt(record, now) {
+				delete(s.leases, id)
+			}
+		}
+		data, err = json.MarshalIndent(s.buildPersistedState(), "", "  ")
+		if err != nil {
+			return fmt.Errorf("encode FRP lease state: %w", err)
+		}
+		payload = append(data, '\n')
+		if len(payload) > maxPersistedStateBytes {
+			return fmt.Errorf("%w: FRP lease state exceeds size limit", ErrQuota)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o750); err != nil {
+		return fmt.Errorf("prepare FRP lease state dir: %w", err)
+	}
+	tmpFile, err := os.CreateTemp(filepath.Dir(s.path), "."+filepath.Base(s.path)+"-*.tmp")
+	if err != nil {
 		return fmt.Errorf("write FRP lease state: %w", err)
 	}
-	defer os.Remove(tmp)
+	tmp := tmpFile.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmp)
+		}
+	}()
+	if err := tmpFile.Chmod(0o600); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("write FRP lease state: %w", err)
+	}
+	if _, err := tmpFile.Write(payload); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("write FRP lease state: %w", err)
+	}
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("write FRP lease state: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("write FRP lease state: %w", err)
+	}
 	if err := os.Rename(tmp, s.path); err != nil {
 		return fmt.Errorf("commit FRP lease state: %w", err)
 	}
+	cleanup = false
 	_ = os.Chmod(s.path, 0o600)
 	return nil
 }
 
 func (s *Store) pruneLocked(now time.Time) {
+	var inactive []leaseRecord
 	for id, record := range s.leases {
 		old := false
 		if record.RevokedAt != nil {
@@ -415,6 +477,27 @@ func (s *Store) pruneLocked(now time.Time) {
 		}
 		if old {
 			delete(s.leases, id)
+		} else if !s.activeAt(record, now) {
+			inactive = append(inactive, record)
+		}
+	}
+	if len(inactive) > maxRetainedInactiveLeases {
+		sort.Slice(inactive, func(i, j int) bool {
+			ti := inactive[i].ExpiresAt
+			if inactive[i].RevokedAt != nil {
+				ti = *inactive[i].RevokedAt
+			}
+			tj := inactive[j].ExpiresAt
+			if inactive[j].RevokedAt != nil {
+				tj = *inactive[j].RevokedAt
+			}
+			if ti.Equal(tj) {
+				return inactive[i].ID < inactive[j].ID
+			}
+			return ti.Before(tj)
+		})
+		for _, drop := range inactive[:len(inactive)-maxRetainedInactiveLeases] {
+			delete(s.leases, drop.ID)
 		}
 	}
 	for id, service := range s.services {
@@ -616,6 +699,7 @@ func (s *Store) Revoke(leaseID, networkID, deviceID string) error {
 	record.RevokedAt = &now
 	record.LastSeen = now
 	s.leases[leaseID] = record
+	s.pruneLocked(now)
 	if err := s.persistLocked(); err != nil {
 		s.leases[leaseID] = original
 		return err

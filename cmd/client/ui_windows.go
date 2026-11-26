@@ -14,6 +14,7 @@ import (
 	"github.com/private-radminlan/lanmesh/core"
 	"github.com/private-radminlan/lanmesh/internal/clientapi"
 	"github.com/private-radminlan/lanmesh/internal/clientui"
+	"golang.org/x/sys/windows"
 )
 
 var (
@@ -333,17 +334,17 @@ func (a *desktop) build() error {
 			HSpacer{},
 		}},
 		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{MarginsZero: true, Spacing: 0}, Children: []Widget{
-			Label{AssignTo: &a.trafficUp, Text: formatTrafficLine(true, 0, 0), TextColor: uiInk, Font: uiMonoFont(9, true), TextAlignment: AlignNear, NoPrefix: true, EllipsisMode: EllipsisEnd, StretchFactor: 1},
+			Label{AssignTo: &a.trafficUp, Text: formatTrafficLine(true, 0, 0), TextColor: uiInk, Font: uiMonoFont(11, true), TextAlignment: AlignNear, NoPrefix: true, EllipsisMode: EllipsisEnd, StretchFactor: 1},
 		}},
 		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{MarginsZero: true, Spacing: 0}, Children: []Widget{
-			Label{AssignTo: &a.trafficDown, Text: formatTrafficLine(false, 0, 0), TextColor: uiInk, Font: uiMonoFont(9, true), TextAlignment: AlignNear, NoPrefix: true, EllipsisMode: EllipsisEnd, StretchFactor: 1},
+			Label{AssignTo: &a.trafficDown, Text: formatTrafficLine(false, 0, 0), TextColor: uiInk, Font: uiMonoFont(11, true), TextAlignment: AlignNear, NoPrefix: true, EllipsisMode: EllipsisEnd, StretchFactor: 1},
 		}},
 	})
 
 	serverDisplayCard := subCard(Margins{Left: 14, Top: 8, Right: 10, Bottom: 8}, 3, []Widget{
 		Label{AssignTo: &a.serverDisplayTitle, Text: tr("当前连接服务器", "Connected Server"), TextColor: uiMuted, Font: uiFont(8, false), NoPrefix: true},
 		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{MarginsZero: true, Spacing: 6}, Children: []Widget{
-			Label{AssignTo: &a.serverIdentity, Text: displayEndpointOrDash(serverValue), TextColor: uiInk, Font: uiMonoFont(9, true), NoPrefix: true, EllipsisMode: EllipsisEnd},
+			Label{AssignTo: &a.serverIdentity, Text: displayEndpointOrDash(serverValue), TextColor: uiInk, Font: uiMonoFont(11, true), NoPrefix: true, EllipsisMode: EllipsisEnd},
 			HSpacer{},
 			eyeButton(&a.powerServerEye, tr("显示或隐藏服务器 IP", "Show or hide server IP"), func() bool { return !a.powerServerHidden }, a.togglePowerServerEye),
 		}},
@@ -573,6 +574,7 @@ func (a *desktop) build() error {
 	if a.joinBlueprint != nil {
 		a.joinBlueprint.SetPaintMode(walk.PaintNoErase)
 	}
+	a.installSizeMoveHook()
 
 	a.onLang(func() {
 		if a.window != nil && !a.window.IsDisposed() {
@@ -842,8 +844,54 @@ func (a *desktop) requestCleanRelayout() {
 	a.repaintWindowTree()
 }
 
+func (a *desktop) installSizeMoveHook() {
+	if a.window == nil || a.window.IsDisposed() {
+		return
+	}
+	hwnd := a.window.Handle()
+	if hwnd == 0 {
+		return
+	}
+	style := win.GetWindowLong(hwnd, win.GWL_STYLE)
+	if style&win.WS_CLIPCHILDREN == 0 {
+		win.SetWindowLong(hwnd, win.GWL_STYLE, style|win.WS_CLIPCHILDREN)
+	}
+	if a.wndProcCB == 0 {
+		a.wndProcCB = windows.NewCallback(func(h win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
+			switch msg {
+			case win.WM_ENTERSIZEMOVE:
+				a.inSizeMove.Store(true)
+				a.resizedDuringMove.Store(false)
+			case win.WM_EXITSIZEMOVE:
+				a.inSizeMove.Store(false)
+				a.ensureAnimLoop()
+				if a.resizedDuringMove.Swap(false) {
+					a.requestCleanRelayout()
+				}
+			case win.WM_NCDESTROY:
+				if prev := a.origWndProc; prev != 0 {
+					a.origWndProc = 0
+					win.SetWindowLongPtr(h, win.GWLP_WNDPROC, prev)
+					return win.CallWindowProc(prev, h, msg, wParam, lParam)
+				}
+			}
+			if prev := a.origWndProc; prev != 0 {
+				return win.CallWindowProc(prev, h, msg, wParam, lParam)
+			}
+			return win.DefWindowProc(h, msg, wParam, lParam)
+		})
+	}
+	if a.origWndProc == 0 {
+		a.origWndProc = win.SetWindowLongPtr(hwnd, win.GWLP_WNDPROC, a.wndProcCB)
+	}
+}
+
 func (a *desktop) handleWindowResized() {
 	if a.window == nil || a.window.IsDisposed() || a.closing.Load() {
+		return
+	}
+	if a.inSizeMove.Load() {
+		a.resizedDuringMove.Store(true)
 		return
 	}
 	if !win.IsIconic(a.window.Handle()) {
@@ -940,7 +988,7 @@ func (a *desktop) ensureAnimLoop() {
 }
 
 func (a *desktop) stepAnimLoop() {
-	if a.closing.Load() || !a.animationsEnabled || highContrastEnabled() || a.window == nil || a.window.IsDisposed() || !win.IsWindowVisible(a.window.Handle()) || win.IsIconic(a.window.Handle()) {
+	if a.closing.Load() || a.inSizeMove.Load() || !a.animationsEnabled || highContrastEnabled() || a.window == nil || a.window.IsDisposed() || !win.IsWindowVisible(a.window.Handle()) || win.IsIconic(a.window.Handle()) {
 		a.animLoopActive = false
 		return
 	}

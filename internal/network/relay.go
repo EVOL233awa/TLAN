@@ -573,19 +573,16 @@ func (c *RelayConnection) ReceiveContext(ctx context.Context) (RelayMessage, err
 
 func (c *RelayConnection) Close() error {
 	c.session.mu.Lock()
-	if !c.session.closed {
-		c.session.closed = true
-		for _, peer := range c.session.peers {
-			peer.closeLocked()
-		}
-	}
+	c.closeLocked()
 	c.session.mu.Unlock()
 	return nil
 }
 
 func (c *RelayConnection) closeLocked() {
 	c.once.Do(func() {
-		delete(c.session.peers, c.device)
+		if c.session.peers[c.device] == c {
+			delete(c.session.peers, c.device)
+		}
 		close(c.done)
 	})
 }

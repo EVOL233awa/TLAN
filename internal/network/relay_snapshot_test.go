@@ -3,6 +3,8 @@ package network
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"net"
 	"testing"
 	"time"
 
@@ -98,6 +100,74 @@ func TestRelayAttachTakeoverClosesOldConnectionAndForwardsNew(t *testing.T) {
 	if err != nil || string(msg.Data) != "fresh" {
 		t.Fatalf("received = %q, err = %v", msg.Data, err)
 	}
+}
+
+func TestRelayServerTakeoverKeepsSessionAndPeerAlive(t *testing.T) {
+	broker := NewRelayBroker(1024)
+	defer broker.Close()
+	ticket, err := broker.CreateSession(core.DeviceID("device-a"), core.DeviceID("device-b"), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dial := func(device core.DeviceID) (net.Conn, <-chan error) {
+		clientConn, serverConn := net.Pipe()
+		srv := &RelayServer{AllowedDevice: device, Broker: broker}
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- srv.ServeConn(serverConn)
+		}()
+		if err := json.NewEncoder(clientConn).Encode(RelayHandshake{Ticket: ticket, Device: device}); err != nil {
+			t.Fatal(err)
+		}
+		line, err := readHandshakeLine(clientConn, 4096)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ans relayHandshakeResponse
+		if err := json.Unmarshal(line, &ans); err != nil || !ans.OK {
+			t.Fatalf("handshake failed: ans=%+v err=%v", ans, err)
+		}
+		return clientConn, errCh
+	}
+
+	oldA, oldAErr := dial(core.DeviceID("device-a"))
+	bConn, bErr := dial(core.DeviceID("device-b"))
+	defer bConn.Close()
+
+	// Peer A reconnects with the same ticket; old A exits and must NOT kill session or B.
+	newA, newAErr := dial(core.DeviceID("device-a"))
+	defer newA.Close()
+	_ = oldA.Close()
+
+	select {
+	case <-oldAErr:
+	case <-time.After(2 * time.Second):
+		t.Fatal("old server handler did not exit after takeover")
+	}
+	select {
+	case err := <-bErr:
+		t.Fatalf("peer B unexpectedly disconnected on A takeover: %v", err)
+	case err := <-newAErr:
+		t.Fatalf("new A unexpectedly disconnected after old A exited: %v", err)
+	default:
+	}
+
+	if err := writeRelayPacket(newA, []byte("hello-from-new-a"), 4096); err != nil {
+		t.Fatalf("write from new A: %v", err)
+	}
+	gotB, err := readRelayPacket(bConn, 4096)
+	if err != nil || string(gotB) != "hello-from-new-a" {
+		t.Fatalf("B received = %q, err = %v", gotB, err)
+	}
+	if err := writeRelayPacket(bConn, []byte("hello-from-b"), 4096); err != nil {
+		t.Fatalf("write from B: %v", err)
+	}
+	gotA, err := readRelayPacket(newA, 4096)
+	if err != nil || string(gotA) != "hello-from-b" {
+		t.Fatalf("new A received = %q, err = %v", gotA, err)
+	}
+	_ = io.Discard
 }
 
 func containsAny(value string, needles ...string) bool {

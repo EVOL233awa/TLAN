@@ -54,7 +54,8 @@ func main() {
 		if walk.MsgBox(nil, tr("卸载 TLAN", "Uninstall TLAN"), tr("确定要卸载 TLAN 并移除快捷方式与开机启动项吗？", "Uninstall TLAN and remove shortcuts and startup entries?"), walk.MsgBoxYesNo|walk.MsgBoxIconQuestion) != walk.DlgCmdYes {
 			return
 		}
-		if err := uninstallTLAN(dir); err != nil {
+		removeUserData := walk.MsgBox(nil, tr("清理用户数据", "Remove User Data"), tr("是否同时删除本机保存的网络凭据与配置（%AppData%\\TLAN）？", "Also remove saved network credentials and configuration (%AppData%\\TLAN)?"), walk.MsgBoxYesNo|walk.MsgBoxIconQuestion) == walk.DlgCmdYes
+		if err := uninstallTLAN(dir, removeUserData); err != nil {
 			walk.MsgBox(nil, tr("卸载失败", "Uninstall Failed"), err.Error(), walk.MsgBoxOK|walk.MsgBoxIconError)
 			return
 		}
@@ -71,8 +72,10 @@ func main() {
 
 	existing, hasExisting := detectExistingInstall()
 	initialDir := defaultInstallDir()
+	initialLaunchAtLogin := false
 	if hasExisting && existing.Dir != "" {
 		initialDir = existing.Dir
+		initialLaunchAtLogin = detectExistingStartupSetting()
 	}
 
 	existingBannerText := func() string {
@@ -211,7 +214,7 @@ func main() {
 				Children: []Widget{
 					CheckBox{AssignTo: &startMenuCB, Checked: true, Text: tr("添加到开始菜单（最近添加）与系统应用列表", "Add to Start Menu (Recently Added) & Apps list")},
 					CheckBox{AssignTo: &desktopCB, Checked: true, Text: tr("创建桌面快捷方式", "Create Desktop shortcut")},
-					CheckBox{AssignTo: &startupCB, Checked: false, Text: tr("开机自动启动 TLAN（静默驻留托盘）", "Launch TLAN automatically at Windows startup")},
+					CheckBox{AssignTo: &startupCB, Checked: initialLaunchAtLogin, Text: tr("开机自动启动 TLAN（静默驻留托盘）", "Launch TLAN automatically at Windows startup")},
 					CheckBox{AssignTo: &launchAfterCB, Checked: true, Text: tr("安装完成后立即启动 TLAN", "Launch TLAN immediately after installation")},
 				},
 			},

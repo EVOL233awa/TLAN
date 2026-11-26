@@ -145,4 +145,10 @@ func TestServerMajorMinorCompatibility(t *testing.T) {
 	if _, err := api.Heartbeat(core.DeviceID(m.Member.ID)); err == nil {
 		t.Fatal("expected Heartbeat rejection for v1.0.0 client against 1.1.0 server")
 	}
+
+	// Dropping the version header must NOT fall back to the previously stored version.
+	api.AgentVersion = ""
+	if _, err := api.Heartbeat(core.DeviceID(m.Member.ID)); err == nil {
+		t.Fatal("expected Heartbeat rejection when X-Client-Version header is omitted")
+	}
 }

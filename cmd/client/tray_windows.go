@@ -164,7 +164,7 @@ func (a *desktop) updateTrayMenu() {
 	if a.trayMeshAction == nil || a.trayFRPAction == nil {
 		return
 	}
-	a.retranslateTrayActions()
+	lang := currentLang()
 
 	meshText := tr("启动虚拟局域网", "Connect Virtual LAN")
 	meshEnabled := a.api != nil && a.api.Token != "" && !a.busy
@@ -193,13 +193,7 @@ func (a *desktop) updateTrayMenu() {
 		frpEnabled = s.Configured && !a.frpStopping && (!a.frpBusy || a.frpStarting)
 	}
 
-	_ = a.trayMeshAction.SetText(meshText)
-	_ = a.trayMeshAction.SetEnabled(meshEnabled)
-	_ = a.trayFRPAction.SetText(frpText)
-	_ = a.trayFRPAction.SetEnabled(frpEnabled)
-	_ = a.traySettingsAction.SetEnabled(true)
-	_ = a.trayExitAction.SetEnabled(true)
-
+	tooltip := ""
 	if a.trayIcon != nil {
 		meshState := tr("已停止", "Stopped")
 		if a.engine != nil {
@@ -209,8 +203,47 @@ func (a *desktop) updateTrayMenu() {
 		if s.Running {
 			frpState = tr("已连接", "Running")
 		}
-		_ = a.trayIcon.SetToolTip(trf("%s · 虚拟局域网 %s · 端口映射 %s", "%s · Virtual LAN %s · Port Mapping %s", windowTitle, meshState, frpState))
+		tooltip = trf("%s · 虚拟局域网 %s · 端口映射 %s", "%s · Virtual LAN %s · Port Mapping %s", windowTitle, meshState, frpState)
 	}
+
+	if a.trayCacheInit &&
+		a.trayCacheLang == lang &&
+		a.trayCacheMeshText == meshText &&
+		a.trayCacheMeshEnabled == meshEnabled &&
+		a.trayCacheFRPText == frpText &&
+		a.trayCacheFRPEnabled == frpEnabled &&
+		a.trayCacheTooltip == tooltip {
+		return
+	}
+
+	if !a.trayCacheInit || a.trayCacheLang != lang {
+		a.retranslateTrayActions()
+		_ = a.traySettingsAction.SetEnabled(true)
+		_ = a.trayExitAction.SetEnabled(true)
+	}
+	if !a.trayCacheInit || a.trayCacheMeshText != meshText {
+		_ = a.trayMeshAction.SetText(meshText)
+	}
+	if !a.trayCacheInit || a.trayCacheMeshEnabled != meshEnabled {
+		_ = a.trayMeshAction.SetEnabled(meshEnabled)
+	}
+	if !a.trayCacheInit || a.trayCacheFRPText != frpText {
+		_ = a.trayFRPAction.SetText(frpText)
+	}
+	if !a.trayCacheInit || a.trayCacheFRPEnabled != frpEnabled {
+		_ = a.trayFRPAction.SetEnabled(frpEnabled)
+	}
+	if a.trayIcon != nil && (!a.trayCacheInit || a.trayCacheTooltip != tooltip) {
+		_ = a.trayIcon.SetToolTip(tooltip)
+	}
+
+	a.trayCacheInit = true
+	a.trayCacheLang = lang
+	a.trayCacheMeshText = meshText
+	a.trayCacheMeshEnabled = meshEnabled
+	a.trayCacheFRPText = frpText
+	a.trayCacheFRPEnabled = frpEnabled
+	a.trayCacheTooltip = tooltip
 }
 
 func (a *desktop) runOnUI(fn func()) {

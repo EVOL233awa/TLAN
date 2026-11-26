@@ -131,6 +131,13 @@ type desktop struct {
 	railSelection                                                                                                      int
 	closing                                                                                                            atomic.Bool
 	explicitExit                                                                                                       atomic.Bool
+	inSizeMove                                                                                                         atomic.Bool
+	resizedDuringMove                                                                                                  atomic.Bool
+	origWndProc                                                                                                        uintptr
+	wndProcCB                                                                                                          uintptr
+	trayCacheInit                                                                                                      bool
+	trayCacheLang, trayCacheMeshText, trayCacheFRPText, trayCacheTooltip                                               string
+	trayCacheMeshEnabled, trayCacheFRPEnabled                                                                          bool
 	shutdownOnce                                                                                                       sync.Once
 	startHidden                                                                                                        bool
 	settingsDialogOpen                                                                                                 bool
@@ -290,6 +297,9 @@ func runDesktop() {
 			case <-ctx.Done():
 				return
 			case <-tick.C:
+				if a.inSizeMove.Load() {
+					continue
+				}
 				a.ui(func() {
 					a.updateStatus()
 					a.updateTrayMenu()

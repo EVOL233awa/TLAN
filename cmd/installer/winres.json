@@ -4,25 +4,25 @@
   "RT_VERSION": {
     "#1": {
       "0000": {
-        "fixed": {"file_version": "1.1.0.0", "product_version": "1.1.0.0"},
+        "fixed": {"file_version": "1.2.0.0", "product_version": "1.2.0.0"},
         "info": {
           "0409": {
             "CompanyName": "TLAN",
             "FileDescription": "TLAN Setup Installer",
-            "FileVersion": "1.1.0.0",
+            "FileVersion": "1.2.0.0",
             "InternalName": "TLAN-Setup",
             "OriginalFilename": "TLAN-Setup.exe",
             "ProductName": "TLAN",
-            "ProductVersion": "1.1.0"
+            "ProductVersion": "1.2.0"
           },
           "0804": {
             "CompanyName": "TLAN",
             "FileDescription": "TLAN 私有局域网安装程序",
-            "FileVersion": "1.1.0.0",
+            "FileVersion": "1.2.0.0",
             "InternalName": "TLAN-Setup",
             "OriginalFilename": "TLAN-Setup.exe",
             "ProductName": "TLAN",
-            "ProductVersion": "1.1.0"
+            "ProductVersion": "1.2.0"
           }
         }
       }

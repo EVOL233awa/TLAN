@@ -112,6 +112,7 @@ func DialHTTPRelayWithRoots(ctx context.Context, baseURL, token string, ticket R
 	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Upgrade", "lanmesh-relay")
+	req.Header.Set("X-Client-Version", core.CurrentVersion)
 	if strings.HasPrefix(token, "member_") {
 		req.Header.Set("Authorization", "Bearer "+token)
 	} else {

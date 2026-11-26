@@ -75,26 +75,26 @@ func isAdminAuthFailure(err error) bool {
 }
 
 func (p *adminPanel) view() Composite {
-	overviewRow := Composite{Background: SolidColorBrush{Color: uiBackground}, Layout: HBox{MarginsZero: true, Spacing: 12}, Children: []Widget{
-		roundView{Composite: Composite{MinSize: Size{Width: 225, Height: 94}, MaxSize: Size{Height: 94}, StretchFactor: 2, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 16, Top: 14, Right: 16, Bottom: 14}, Spacing: 4}, Children: []Widget{
+	overviewRow := Composite{MinSize: Size{Height: 96}, MaxSize: Size{Height: 96}, Background: SolidColorBrush{Color: uiBackground}, Layout: HBox{MarginsZero: true, Spacing: 12}, Children: []Widget{
+		roundView{Composite: Composite{MinSize: Size{Width: 225, Height: 96}, MaxSize: Size{Height: 96}, StretchFactor: 2, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 16, Top: 14, Right: 16, Bottom: 14}, Spacing: 4}, Children: []Widget{
 			Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true}, Children: []Widget{Label{AssignTo: &p.serverCardCap, Text: tr("服务端", "Server"), TextColor: uiMuted, Font: uiFont(9, false), NoPrefix: true}, HSpacer{}}},
 			Label{AssignTo: &p.service, Text: tr("正在读取…", "Loading…"), TextColor: uiInk, Font: uiFont(12, true), NoPrefix: true, EllipsisMode: EllipsisEnd},
-			VSpacer{StretchFactor: 1},
+			VSpacer{GreedyLocallyOnly: true},
 			Label{AssignTo: &p.endpoint, Text: "—", TextColor: uiMuted, Font: uiMonoFont(8, false), NoPrefix: true, EllipsisMode: EllipsisEnd},
 		}}, fill: uiWhite, radius: 12, border: borderColor(uiBorder), hud: false},
-		roundView{Composite: Composite{MinSize: Size{Width: 215, Height: 94}, MaxSize: Size{Height: 94}, StretchFactor: 2, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 16, Top: 14, Right: 16, Bottom: 14}, Spacing: 4}, Children: []Widget{
+		roundView{Composite: Composite{MinSize: Size{Width: 215, Height: 96}, MaxSize: Size{Height: 96}, StretchFactor: 2, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 16, Top: 14, Right: 16, Bottom: 14}, Spacing: 4}, Children: []Widget{
 			Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true}, Children: []Widget{Label{AssignTo: &p.networkCardCap, Text: tr("私有网络", "Network"), TextColor: uiMuted, Font: uiFont(9, false), NoPrefix: true}, HSpacer{}}},
 			Label{AssignTo: &p.network, Text: "—", TextColor: uiBlue, Font: uiFont(12, true), NoPrefix: true, EllipsisMode: EllipsisEnd},
-			VSpacer{StretchFactor: 1},
+			VSpacer{GreedyLocallyOnly: true},
 			Label{AssignTo: &p.updated, Text: "—", TextColor: uiMuted, Font: uiMonoFont(8, false), NoPrefix: true, EllipsisMode: EllipsisEnd},
 		}}, fill: uiWhite, radius: 12, border: borderColor(uiBorder), hud: false},
-		roundView{Composite: Composite{MinSize: Size{Width: 125, Height: 94}, MaxSize: Size{Height: 94}, StretchFactor: 1, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 16, Top: 14, Right: 16, Bottom: 14}, Spacing: 4}, Children: []Widget{
+		roundView{Composite: Composite{MinSize: Size{Width: 125, Height: 96}, MaxSize: Size{Height: 96}, StretchFactor: 1, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 16, Top: 14, Right: 16, Bottom: 14}, Spacing: 4}, Children: []Widget{
 			Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true}, Children: []Widget{Label{AssignTo: &p.countsCardCap, Text: tr("成员 / 在线", "Members / Online"), TextColor: uiMuted, Font: uiFont(9, false), NoPrefix: true}, HSpacer{}}},
 			Label{AssignTo: &p.counts, Text: "—", TextColor: uiInk, Font: uiFont(15, true), NoPrefix: true},
-			VSpacer{StretchFactor: 1},
+			VSpacer{GreedyLocallyOnly: true},
 			Label{AssignTo: &p.countsSubCap, Text: tr("总成员 / 在线数", "Total / Active"), TextColor: uiMuted, Font: uiMonoFont(8, false), NoPrefix: true, EllipsisMode: EllipsisEnd},
 		}}, fill: uiWhite, radius: 12, border: borderColor(uiBorder), hud: false},
-		roundView{Composite: Composite{MinSize: Size{Width: 165, Height: 94}, MaxSize: Size{Height: 94}, StretchFactor: 1, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 16, Top: 14, Right: 16, Bottom: 14}, Spacing: 4}, Children: []Widget{
+		roundView{Composite: Composite{MinSize: Size{Width: 165, Height: 96}, MaxSize: Size{Height: 96}, StretchFactor: 1, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 16, Top: 14, Right: 16, Bottom: 14}, Spacing: 4}, Children: []Widget{
 			Label{AssignTo: &p.relayCardCap, Text: tr("中继 / 端口映射", "Relay / Port Maps"), TextColor: uiMuted, Font: uiFont(9, false), NoPrefix: true},
 			Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true, Spacing: 6}, Children: []Widget{
 				Label{AssignTo: &p.relay, Text: "—", TextColor: uiInk, Font: uiFont(15, true), NoPrefix: true},
@@ -102,7 +102,7 @@ func (p *adminPanel) view() Composite {
 				Label{AssignTo: &p.frp, Text: "—", TextColor: uiBlue, Font: uiFont(15, true), NoPrefix: true},
 				HSpacer{},
 			}},
-			VSpacer{StretchFactor: 1},
+			VSpacer{GreedyLocallyOnly: true},
 			Label{AssignTo: &p.portLimit, Text: tr("映射端口 60000-61000", "Ports 60000-61000"), TextColor: uiMuted, Font: uiMonoFont(8, false), NoPrefix: true, EllipsisMode: EllipsisEnd},
 		}}, fill: uiWhite, radius: 12, border: borderColor(uiBorder), hud: false},
 	}}
@@ -127,7 +127,7 @@ func (p *adminPanel) view() Composite {
 		}}, fill: uiTableAlt, radius: 10, border: borderColor(uiBorder), hud: false}
 	}
 
-	configCard := roundView{Composite: Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 18, Top: 12, Right: 18, Bottom: 12}, Spacing: 10}, Children: []Widget{
+	configCard := roundView{Composite: Composite{MinSize: Size{Height: 108}, MaxSize: Size{Height: 108}, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 18, Top: 12, Right: 18, Bottom: 12}, Spacing: 10}, Children: []Widget{
 		Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true}, Children: []Widget{
 			Label{AssignTo: &p.configBarTitle, Text: tr("服务端与网络配置", "Service & Network Settings"), TextColor: uiInk, Font: uiFont(11, true), NoPrefix: true},
 			HSpacer{},

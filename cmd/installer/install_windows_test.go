@@ -98,7 +98,30 @@ func TestDetectExistingInstallCandidateAndBuiltPEVersion(t *testing.T) {
 	builtExe := filepath.Join("..", "..", "dist", "windows", "TLAN.exe")
 	if _, err := os.Stat(builtExe); err == nil {
 		if ver := readPEFileVersion(builtExe); ver != core.CurrentVersion {
-			t.Fatalf("readPEFileVersion(%q) = %q, want %q", builtExe, ver, core.CurrentVersion)
+			t.Fatalf("built TLAN.exe PE version = %q, want %q", ver, core.CurrentVersion)
 		}
+	}
+}
+
+func TestValidateInstallDirRejectsUnsafePaths(t *testing.T) {
+	bad := []string{
+		"",
+		`relative\TLAN`,
+		`\\attacker\share\TLAN`,
+		`\\?\C:\Program Files\TLAN`,
+		`C:\`,
+		`C:\TLAN.`,
+		`C:\TLAN \sub`,
+		`C:\TLAN.\sub`,
+		`C:\TLAN\%APPDATA%`,
+	}
+	for _, p := range bad {
+		if _, err := validateInstallDir(p); err == nil {
+			t.Errorf("validateInstallDir(%q) = nil, want error", p)
+		}
+	}
+	got, err := validateInstallDir(` C:\Program Files\TLAN `)
+	if err != nil || got != `C:\Program Files\TLAN` {
+		t.Fatalf("validateInstallDir valid = (%q, %v)", got, err)
 	}
 }

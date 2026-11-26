@@ -118,3 +118,34 @@ func TestAdminEnrollmentAndClientAdminAPI(t *testing.T) {
 		t.Fatal("member was able to rename another member's device")
 	}
 }
+
+func TestPublicAdminFailuresRateLimitBadTokensWithoutLockingOutValidToken(t *testing.T) {
+	store, err := storage.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.EnsurePrivateNetwork("Admin Proxy", "test-join-code", "10.244.0.0/24"); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer((&Server{Store: store, AdminToken: "test-admin-token"}).Handler())
+	defer server.Close()
+
+	badAPI := clientapi.NewAdmin(server.URL, "wrong-token")
+	for i := 0; i < adminLoginLimit; i++ {
+		_, err := badAPI.Overview()
+		var apiErr *clientapi.AdminAPIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != 401 {
+			t.Fatalf("bad attempt %d err = %v, want 401", i+1, err)
+		}
+	}
+	_, err = badAPI.Overview()
+	var apiErr *clientapi.AdminAPIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != 429 {
+		t.Fatalf("rate-limited bad attempt err = %v, want 429", err)
+	}
+
+	// Valid admin token from the same proxy loopback IP must still succeed.
+	if _, err := clientapi.NewAdmin(server.URL, "test-admin-token").Overview(); err != nil {
+		t.Fatalf("valid admin token was locked out after bad attempts: %v", err)
+	}
+}

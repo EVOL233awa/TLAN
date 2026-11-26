@@ -57,24 +57,18 @@ func readPEFileVersion(exePath string) string {
 		return ""
 	}
 	subPtr := windows.StringToUTF16Ptr(`\`)
-	var fixed *struct {
-		Signature     uint32
-		StrucVersion  uint32
-		FileVersionMS uint32
-		FileVersionLS uint32
-	}
+	var infoPtr unsafe.Pointer
 	var infoLen uint32
-	qOk, _, _ := procVerQueryValue.Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(subPtr)), uintptr(unsafe.Pointer(&fixed)), uintptr(unsafe.Pointer(&infoLen)))
-	if qOk == 0 || fixed == nil || infoLen < 16 {
-		runtime.KeepAlive(buf)
+	qOk, _, _ := procVerQueryValue.Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(subPtr)), uintptr(unsafe.Pointer(&infoPtr)), uintptr(unsafe.Pointer(&infoLen)))
+	if qOk == 0 || infoPtr == nil || infoLen < 16 {
 		return ""
 	}
-	sig, ms, ls := fixed.Signature, fixed.FileVersionMS, fixed.FileVersionLS
+	fields := *(*[4]uint32)(infoPtr)
 	runtime.KeepAlive(buf)
-	if sig != 0xFEEF04BD {
+	if fields[0] != 0xFEEF04BD {
 		return ""
 	}
-	return formatFixedFileVersion(ms, ls)
+	return formatFixedFileVersion(fields[2], fields[3])
 }
 
 func parseStartupExePath(cmd string) string {
@@ -135,65 +129,96 @@ func compareReleaseVersions(a, b string) int {
 	return 0
 }
 
-func detectExistingInstall(extraDirs ...string) (existingInstall, bool) {
-	seen := make(map[string]struct{}, len(extraDirs)+1)
-	checkDir := func(rawDir string) (existingInstall, bool) {
-		trimmed := strings.TrimSpace(rawDir)
-		if trimmed == "" {
-			return existingInstall{}, false
+func validateInstallDir(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", errors.New("invalid installation directory")
+	}
+	if strings.HasPrefix(trimmed, `\\`) {
+		return "", errors.New("UNC and device paths are not allowed for installation directory")
+	}
+	if strings.ContainsAny(trimmed, "\"%\x00\r\n") {
+		return "", errors.New("installation directory contains unsupported characters")
+	}
+	cleaned := filepath.Clean(trimmed)
+	if !filepath.IsAbs(cleaned) {
+		return "", errors.New("installation directory must be an absolute path")
+	}
+	vol := filepath.VolumeName(cleaned)
+	if vol == "" || cleaned == vol || cleaned == vol+`\` {
+		return "", errors.New("cannot install directly to a drive root")
+	}
+	rest := strings.TrimPrefix(cleaned, vol)
+	for _, part := range strings.Split(rest, `\`) {
+		if part == "" {
+			continue
 		}
-		dir := filepath.Clean(trimmed)
+		if strings.HasSuffix(part, ".") || strings.HasSuffix(part, " ") {
+			return "", errors.New("installation directory components must not end with a dot or space")
+		}
+	}
+	if ptr, err := windows.UTF16PtrFromString(cleaned); err == nil {
+		if attrs, attrErr := windows.GetFileAttributes(ptr); attrErr == nil {
+			if attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+				return "", errors.New("installation directory must not be a reparse point")
+			}
+		}
+	}
+	return cleaned, nil
+}
+
+func detectExistingInstall(extraDirs ...string) (existingInstall, bool) {
+	if len(extraDirs) == 0 {
+		if key, err := registry.OpenKey(registry.LOCAL_MACHINE, uninstallRegKeyPath, registry.QUERY_VALUE); err == nil {
+			loc, _, locErr := key.GetStringValue("InstallLocation")
+			dispVer, _, _ := key.GetStringValue("DisplayVersion")
+			_ = key.Close()
+			if locErr == nil {
+				if dir, validErr := validateInstallDir(loc); validErr == nil {
+					exe := filepath.Join(dir, "TLAN.exe")
+					if st, statErr := os.Stat(exe); statErr == nil && !st.IsDir() {
+						ver := strings.TrimSpace(dispVer)
+						if ver == "" {
+							ver = readPEFileVersion(exe)
+						}
+						return existingInstall{Dir: dir, Version: ver}, true
+					}
+				}
+			}
+		}
+	}
+
+	candidates := append([]string{}, extraDirs...)
+	candidates = append(candidates, defaultInstallDir())
+	seen := make(map[string]struct{}, len(candidates))
+	for _, rawDir := range candidates {
+		dir, validErr := validateInstallDir(rawDir)
+		if validErr != nil {
+			continue
+		}
 		key := strings.ToLower(dir)
 		if _, exists := seen[key]; exists {
-			return existingInstall{}, false
+			continue
 		}
 		seen[key] = struct{}{}
 		exe := filepath.Join(dir, "TLAN.exe")
 		if st, statErr := os.Stat(exe); statErr == nil && !st.IsDir() {
 			return existingInstall{Dir: dir, Version: readPEFileVersion(exe)}, true
 		}
-		return existingInstall{}, false
 	}
+	return existingInstall{}, false
+}
 
-	for _, rawDir := range extraDirs {
-		if found, ok := checkDir(rawDir); ok {
-			return found, true
-		}
+func detectExistingStartupSetting() bool {
+	if settings, err := clientidentity.LoadSettings(); err == nil {
+		return settings.LaunchAtLogin
 	}
-
-	if key, err := registry.OpenKey(registry.LOCAL_MACHINE, uninstallRegKeyPath, registry.QUERY_VALUE); err == nil {
-		loc, _, locErr := key.GetStringValue("InstallLocation")
-		dispVer, _, _ := key.GetStringValue("DisplayVersion")
-		_ = key.Close()
-		if locErr == nil && strings.TrimSpace(loc) != "" {
-			dir := filepath.Clean(strings.TrimSpace(loc))
-			exe := filepath.Join(dir, "TLAN.exe")
-			if st, statErr := os.Stat(exe); statErr == nil && !st.IsDir() {
-				ver := strings.TrimSpace(dispVer)
-				if ver == "" {
-					ver = readPEFileVersion(exe)
-				}
-				return existingInstall{Dir: dir, Version: ver}, true
-			}
-		}
-	}
-
 	if key, err := registry.OpenKey(registry.CURRENT_USER, startupRunKeyPath, registry.QUERY_VALUE); err == nil {
 		cmdVal, _, valErr := key.GetStringValue(startupValueName)
 		_ = key.Close()
-		if valErr == nil {
-			if exe := parseStartupExePath(cmdVal); exe != "" {
-				if st, statErr := os.Stat(exe); statErr == nil && !st.IsDir() {
-					return existingInstall{Dir: filepath.Dir(exe), Version: readPEFileVersion(exe)}, true
-				}
-			}
-		}
+		return valErr == nil && strings.TrimSpace(cmdVal) != ""
 	}
-
-	if found, ok := checkDir(defaultInstallDir()); ok {
-		return found, true
-	}
-	return existingInstall{}, false
+	return false
 }
 
 func formatVersionLabel(v string, en bool) string {
@@ -400,9 +425,9 @@ func applyStartupSetting(exePath string, enabled bool) error {
 }
 
 func installTLAN(opts installOptions, logFn func(string)) error {
-	dir := filepath.Clean(strings.TrimSpace(opts.InstallDir))
-	if dir == "" || !filepath.IsAbs(dir) {
-		return errors.New("invalid installation directory")
+	dir, err := validateInstallDir(opts.InstallDir)
+	if err != nil {
+		return err
 	}
 	report := func(msg string) {
 		if logFn != nil {
@@ -446,10 +471,16 @@ func installTLAN(opts installOptions, logFn func(string)) error {
 
 	exePath := filepath.Join(dir, "TLAN.exe")
 	uninstallPath := filepath.Join(dir, "TLAN-Uninstall.exe")
-	if selfPath, err := os.Executable(); err == nil {
-		if data, readErr := os.ReadFile(selfPath); readErr == nil {
-			_ = os.WriteFile(uninstallPath, data, 0o755)
-		}
+	selfPath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locate installer binary: %w", err)
+	}
+	data, readErr := os.ReadFile(selfPath)
+	if readErr != nil {
+		return fmt.Errorf("read installer binary: %w", readErr)
+	}
+	if err := os.WriteFile(uninstallPath, data, 0o755); err != nil {
+		return fmt.Errorf("write uninstaller %s: %w", uninstallPath, err)
 	}
 
 	if opts.StartMenu {
@@ -483,25 +514,67 @@ func installTLAN(opts installOptions, logFn func(string)) error {
 	return nil
 }
 
-func uninstallTLAN(installDir string) error {
+func removeIgnoreNotExist(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func uninstallTLAN(installDir string, removeUserData bool) error {
+	dir, err := validateInstallDir(installDir)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(dir, "TLAN.exe")); errors.Is(err, os.ErrNotExist) {
+		if _, err2 := os.Stat(filepath.Join(dir, "TLAN-Uninstall.exe")); errors.Is(err2, os.ErrNotExist) {
+			return fmt.Errorf("installation directory does not contain TLAN: %s", dir)
+		}
+	}
+
 	stopRunningTLAN()
-	_ = os.RemoveAll(startMenuDirPath())
-	_ = os.Remove(desktopShortcutPath())
-	_ = registry.DeleteKey(registry.LOCAL_MACHINE, uninstallRegKeyPath)
+	var errs []error
+	if err := os.RemoveAll(startMenuDirPath()); err != nil {
+		errs = append(errs, err)
+	}
+	if err := removeIgnoreNotExist(desktopShortcutPath()); err != nil {
+		errs = append(errs, err)
+	}
+	if err := registry.DeleteKey(registry.LOCAL_MACHINE, uninstallRegKeyPath); err != nil && !errors.Is(err, registry.ErrNotExist) {
+		errs = append(errs, err)
+	}
 	if key, err := registry.OpenKey(registry.CURRENT_USER, startupRunKeyPath, registry.SET_VALUE); err == nil {
-		_ = key.DeleteValue(startupValueName)
+		if delErr := key.DeleteValue(startupValueName); delErr != nil && !errors.Is(delErr, registry.ErrNotExist) {
+			errs = append(errs, delErr)
+		}
 		_ = key.Close()
 	}
 
-	dir := filepath.Clean(strings.TrimSpace(installDir))
-	if dir != "" && filepath.IsAbs(dir) {
-		for _, name := range []string{"TLAN.exe", "wintun.dll", "frpc.exe", "tlan-icon.png", "WINTUN-LICENSE.txt", "FRP-LICENSE.txt"} {
-			_ = os.Remove(filepath.Join(dir, name))
+	for _, name := range []string{"TLAN.exe", "wintun.dll", "frpc.exe", "tlan-icon.png", "WINTUN-LICENSE.txt", "FRP-LICENSE.txt"} {
+		if err := removeIgnoreNotExist(filepath.Join(dir, name)); err != nil {
+			errs = append(errs, err)
 		}
-		self, _ := os.Executable()
-		cmd := exec.Command("cmd", "/C", fmt.Sprintf(`ping 127.0.0.1 -n 3 > nul & del /F /Q %q & rmdir %q`, self, dir))
-		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-		_ = cmd.Start()
 	}
-	return nil
+	if removeUserData {
+		if configDir, err := os.UserConfigDir(); err == nil && strings.TrimSpace(configDir) != "" {
+			if remErr := os.RemoveAll(filepath.Join(configDir, "TLAN")); remErr != nil {
+				errs = append(errs, remErr)
+			}
+		}
+	}
+	self, _ := os.Executable()
+	if strings.TrimSpace(self) != "" && !strings.ContainsAny(self, "\"%\x00\r\n") {
+		cmdLine := fmt.Sprintf(`ping 127.0.0.1 -n 3 > nul & del /F /Q "%s" & rmdir "%s"`, self, dir)
+		cmd := exec.Command("cmd", "/C", cmdLine)
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		if err := cmd.Start(); err != nil {
+			errs = append(errs, err)
+		}
+	} else {
+		if err := removeIgnoreNotExist(filepath.Join(dir, "TLAN-Uninstall.exe")); err != nil {
+			errs = append(errs, err)
+		}
+		_ = os.Remove(dir)
+	}
+	return errors.Join(errs...)
 }

@@ -109,18 +109,18 @@ func (s *Server) auth(next http.Handler) http.Handler {
 		}
 		if isAdminAPIPath(r.URL.Path) {
 			ip := adminClientIP(r)
+			if s.adminTokenMatches(token) {
+				s.resetPublicAdminFailures(ip)
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), adminKey{}, true)))
+				return
+			}
 			if !s.allowPublicAdminAttempt(ip) {
 				w.Header().Set("Retry-After", "900")
 				writeError(w, http.StatusTooManyRequests, "too many admin attempts")
 				return
 			}
-			if !s.adminTokenMatches(token) {
-				s.notePublicAdminFailure(ip)
-				writeError(w, http.StatusUnauthorized, "unauthorized")
-				return
-			}
-			s.resetPublicAdminFailures(ip)
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), adminKey{}, true)))
+			s.notePublicAdminFailure(ip)
+			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 		if s.adminTokenMatches(token) {
@@ -131,14 +131,12 @@ func (s *Server) auth(next http.Handler) http.Handler {
 			reported := strings.TrimSpace(r.Header.Get(clientVersionHeader))
 			if reported != "" {
 				_ = s.Store.SetClientVersion(core.DeviceID(credential.DeviceID), reported)
-			} else if stored, ok := s.Store.ClientVersion(core.DeviceID(credential.DeviceID)); ok {
-				reported = stored
 			}
 			if err := s.checkMajorMinor(reported); err != nil {
 				writeError(w, http.StatusUpgradeRequired, err.Error())
 				return
 			}
-			if err := s.clientVersionAllowed(credential); err != nil {
+			if err := s.clientVersionAllowed(reported); err != nil {
 				writeError(w, http.StatusUpgradeRequired, err.Error())
 				return
 			}
@@ -455,7 +453,15 @@ func (s *Server) networkDevice(w http.ResponseWriter, r *http.Request, networkID
 			if !decodeJSON(w, r, &req) {
 				return
 			}
-			record, err := s.Store.SetCandidates(nid, did, req.Candidates)
+			candidates := req.Candidates[:0]
+			for _, candidate := range req.Candidates {
+				if err := candidate.Validate(); err != nil {
+					slog.Warn("discarding invalid candidate", "network", nid.String(), "device", did.String(), "address", candidate.Address, "error", err)
+					continue
+				}
+				candidates = append(candidates, candidate)
+			}
+			record, err := s.Store.SetCandidates(nid, did, candidates)
 			if err != nil {
 				status := http.StatusBadRequest
 				if errors.Is(err, storage.ErrNotFound) {

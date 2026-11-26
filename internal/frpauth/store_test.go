@@ -751,3 +751,40 @@ func TestSetAllowedPortsUpdatesAndRevokesOutOfPolicyLeases(t *testing.T) {
 		t.Fatalf("Capabilities().AllowedPorts = %+v", caps.AllowedPorts)
 	}
 }
+
+func TestLeaseStateCapsInactiveTombstonesAndSizeBudget(t *testing.T) {
+	store, clock := testStore(t)
+	store.limits.MaxLeasesPerDevice = 100
+	for i := 0; i < maxRetainedInactiveLeases+40; i++ {
+		*clock = clock.Add(time.Second)
+		lease, err := store.Issue("net-a", "dev-a", "frps-managed-1", []Rule{
+			{ID: "rule-1", ProxyName: "tlan_1", Type: "tcp", RemotePort: 30001, BindPort: 8080},
+		})
+		if err != nil {
+			t.Fatalf("issue #%d: %v", i, err)
+		}
+		if err := store.Revoke(lease.LeaseID, "net-a", "dev-a"); err != nil {
+			t.Fatalf("revoke #%d: %v", i, err)
+		}
+	}
+	info, err := os.Stat(store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() > maxPersistedStateBytes {
+		t.Fatalf("persisted state size = %d, exceeds %d", info.Size(), maxPersistedStateBytes)
+	}
+	reopened, err := NewStore(Options{
+		StatePath:      store.path,
+		ServerID:       "frps-managed-1",
+		CoreVersion:    "0.71.1",
+		AllowedPorts:   []PortRange{{Start: 30000, End: 30099}},
+		AllowedDomains: []string{"frp.example.com"},
+	})
+	if err != nil {
+		t.Fatalf("reopen after tombstones cap failed: %v", err)
+	}
+	if len(reopened.leases) > maxRetainedInactiveLeases {
+		t.Fatalf("retained inactive leases = %d, want <= %d", len(reopened.leases), maxRetainedInactiveLeases)
+	}
+}

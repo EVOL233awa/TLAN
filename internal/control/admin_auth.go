@@ -19,6 +19,7 @@ const (
 	adminSessionMax    = 8
 	adminLoginWindow   = 15 * time.Minute
 	adminLoginLimit    = 5
+	adminAttemptCap    = 2048
 )
 
 type adminSession struct {
@@ -86,7 +87,10 @@ func (a *adminAuth) allowLogin(r *http.Request) bool {
 			delete(a.attempts, key)
 		}
 	}
-	window := a.attempts[ip]
+	window, exists := a.attempts[ip]
+	if !exists && len(a.attempts) >= adminAttemptCap {
+		return false
+	}
 	if window.start.IsZero() || now.Sub(window.start) >= adminLoginWindow {
 		window = adminWindow{start: now}
 	}
@@ -103,7 +107,15 @@ func (a *adminAuth) noteLoginFailure(r *http.Request) {
 	now := a.now()
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	window := a.attempts[ip]
+	for key, window := range a.attempts {
+		if now.Sub(window.start) >= adminLoginWindow {
+			delete(a.attempts, key)
+		}
+	}
+	window, exists := a.attempts[ip]
+	if !exists && len(a.attempts) >= adminAttemptCap {
+		return
+	}
 	if window.start.IsZero() || now.Sub(window.start) >= adminLoginWindow {
 		window = adminWindow{start: now}
 	}
@@ -123,10 +135,6 @@ func (a *adminAuth) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if !a.allowLogin(r) {
-		http.Error(w, "too many login attempts", http.StatusTooManyRequests)
-		return
-	}
 	var req struct {
 		Token string `json:"token"`
 	}
@@ -135,6 +143,10 @@ func (a *adminAuth) login(w http.ResponseWriter, r *http.Request) {
 	}
 	got := sha256.Sum256([]byte(req.Token))
 	if subtle.ConstantTimeCompare(a.tokenHash[:], got[:]) != 1 {
+		if !a.allowLogin(r) {
+			http.Error(w, "too many login attempts", http.StatusTooManyRequests)
+			return
+		}
 		a.noteLoginFailure(r)
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return

@@ -325,6 +325,38 @@ func checkDesktopUI() error {
 	if err := assertPage(pageAdmin); err != nil {
 		return err
 	}
+	// Verify vertical resize stability on tall window (1020x960dp) for both Admin overview and FRP composer.
+	origWinSz := a.window.SizePixels()
+	tallWinSz := walk.Size{Width: origWinSz.Width, Height: a.window.IntFrom96DPI(960)}
+	_ = a.window.SetSizePixels(tallWinSz)
+	a.requestCleanRelayout()
+	if overviewContainer, ok := a.admin.page.Children().At(0).(walk.Container); ok {
+		if oh := overviewContainer.BoundsPixels().Height; oh > a.window.IntFrom96DPI(110) {
+			return fmt.Errorf("admin overview row stretched vertically on tall resize: height=%d", oh)
+		}
+	}
+	if cfgCard, ok := a.admin.page.Children().At(1).(walk.Container); ok {
+		if ch := cfgCard.BoundsPixels().Height; ch > a.window.IntFrom96DPI(120) {
+			return fmt.Errorf("admin config card stretched vertically on tall resize: height=%d", ch)
+		}
+	}
+	a.showPage(pageFRP)
+	a.requestCleanRelayout()
+	if frpQuickCard, ok := a.frpPage.Children().At(0).(walk.Container); ok {
+		if qh := frpQuickCard.BoundsPixels().Height; qh > a.window.IntFrom96DPI(205) {
+			return fmt.Errorf("FRP quickCard stretched vertically on tall resize: height=%d", qh)
+		}
+	}
+	if ipTall, addTall := a.frpQuickLocalIP.BoundsPixels(), a.frpQuickAddButton.BoundsPixels(); ipTall.Height > 0 {
+		if d := (addTall.Y*2 + addTall.Height) - (ipTall.Y*2 + ipTall.Height); d < -2 || d > 2 {
+			return fmt.Errorf("FRP composer misaligned after tall resize: add=%+v ip=%+v", addTall, ipTall)
+		}
+	}
+	_ = a.window.SetSizePixels(origWinSz)
+	a.admin.busy = true
+	a.showPage(pageAdmin)
+	a.admin.setBusy(false)
+	a.requestCleanRelayout()
 	if len(a.admin.model.rows) != 3 || !strings.Contains(a.admin.counts.Text(), "3 / 2") {
 		return fmt.Errorf("admin panel fixture did not render overview or members")
 	}

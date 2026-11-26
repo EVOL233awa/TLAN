@@ -1513,41 +1513,40 @@ func mixColor(from, to walk.Color, amount float64) walk.Color {
 
 // makeRightArrowView renders an antialiased right arrow centered horizontally
 // and at centerYDP (96-DPI offset from top, or vertical middle if <= 0).
-func makeRightArrowView(width, height, centerYDP int, bg func() walk.Color, fg func() walk.Color) CustomWidget {
-	var cw *walk.CustomWidget
-	return CustomWidget{
-		AssignTo:            &cw,
-		MinSize:             Size{Width: width, Height: height},
-		MaxSize:             Size{Width: width, Height: height},
-		PaintMode:           PaintNoErase,
-		InvalidatesOnResize: true,
-		PaintPixels: func(canvas *walk.Canvas, _ walk.Rectangle) error {
-			if cw == nil || cw.IsDisposed() {
-				return nil
+func makeRightArrowView(width, height, centerYDP int, bg func() walk.Color, fg func() walk.Color) ImageView {
+	image := walk.NewPaintFuncImagePixels(walk.Size{Width: width, Height: height}, func(canvas *walk.Canvas, bounds walk.Rectangle) error {
+		r := win.RECT{Left: int32(bounds.X), Top: int32(bounds.Y), Right: int32(bounds.X + bounds.Width), Bottom: int32(bounds.Y + bounds.Height)}
+		return drawBufferedSmooth(canvas.HDC(), r, bg(), func(c *smoothCanvas, local win.RECT) {
+			w := int(local.Right - local.Left)
+			h := int(local.Bottom - local.Top)
+			if w <= 0 || h <= 0 {
+				return
 			}
-			cb := cw.ClientBoundsPixels()
-			if cb.Width <= 0 || cb.Height <= 0 {
-				return nil
+			scale := 1.0
+			if height > 0 {
+				scale = float64(h) / float64(height)
 			}
-			r := win.RECT{Right: int32(cb.Width), Bottom: int32(cb.Height)}
-			return drawBufferedSmooth(canvas.HDC(), r, bg(), func(c *smoothCanvas, local win.RECT) {
-				dpi := cw.DPI()
-				cx := int(local.Left+local.Right) / 2
-				cy := int(local.Top+local.Bottom) / 2
-				if centerYDP > 0 {
-					cy = int(local.Top) + walk.IntFrom96DPI(centerYDP, dpi)
-				}
-				halfLen := walk.IntFrom96DPI(6, dpi)
-				tip := walk.IntFrom96DPI(3, dpi)
-				color := fg()
-				stroke := float32(walk.IntFrom96DPI(16, dpi)) / 10.0
-				if stroke < 1.5 {
-					stroke = 1.5
-				}
-				c.lineAlpha(cx-halfLen, cy, cx+halfLen, cy, color, 255, stroke)
-				c.lineAlpha(cx+halfLen-tip, cy-tip, cx+halfLen, cy, color, 255, stroke)
-				c.lineAlpha(cx+halfLen-tip, cy+tip, cx+halfLen, cy, color, 255, stroke)
-			})
-		},
+			cx := int(local.Left+local.Right) / 2
+			cy := int(local.Top+local.Bottom) / 2
+			if centerYDP > 0 {
+				cy = int(local.Top) + int(math.Round(float64(centerYDP)*scale))
+			}
+			halfLen := int(math.Round(6 * scale))
+			tip := int(math.Round(3 * scale))
+			color := fg()
+			stroke := float32(1.6 * scale)
+			if stroke < 1.5 {
+				stroke = 1.5
+			}
+			c.lineAlpha(cx-halfLen, cy, cx+halfLen, cy, color, 255, stroke)
+			c.lineAlpha(cx+halfLen-tip, cy-tip, cx+halfLen, cy, color, 255, stroke)
+			c.lineAlpha(cx+halfLen-tip, cy+tip, cx+halfLen, cy, color, 255, stroke)
+		})
+	})
+	return ImageView{
+		Image:   image,
+		MinSize: Size{Width: width, Height: height},
+		MaxSize: Size{Width: width, Height: height},
+		Mode:    ImageViewModeIdeal,
 	}
 }

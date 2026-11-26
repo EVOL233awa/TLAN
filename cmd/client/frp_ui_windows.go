@@ -278,7 +278,7 @@ func (a *desktop) buildFRPPage() Widget {
 
 	var headerTitle, localIPLbl, localPortLbl, remotePortLbl, protoLbl, nameLbl, listTitle *walk.Label
 
-	headerRow := Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
+	headerRow := Composite{MinSize: Size{Height: 32}, MaxSize: Size{Height: 32}, Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
 		Label{AssignTo: &headerTitle, Text: tr("添加端口映射", "Add Port Mapping"), TextColor: uiInk, Font: uiFont(12, true), NoPrefix: true},
 		Label{AssignTo: &a.frpStatus, Text: tr("● 就绪", "● Ready"), TextColor: uiMuted, Font: uiFont(9, true), NoPrefix: true},
 		Label{AssignTo: &a.frpServer, Text: "", TextColor: uiMuted, Font: uiFont(8, false), EllipsisMode: EllipsisEnd, StretchFactor: 1, NoPrefix: true},
@@ -286,9 +286,9 @@ func (a *desktop) buildFRPPage() Widget {
 		toggleBtn,
 	}}
 
-	serverEndpointBanner := roundView{Composite: Composite{Background: SolidColorBrush{Color: uiBlueSoft}, Layout: HBox{Margins: Margins{Left: 14, Top: 9, Right: 10, Bottom: 9}, Spacing: 10}, Children: []Widget{
+	serverEndpointBanner := roundView{Composite: Composite{MinSize: Size{Height: 46}, MaxSize: Size{Height: 46}, Background: SolidColorBrush{Color: uiBlueSoft}, Layout: HBox{Margins: Margins{Left: 14, Top: 9, Right: 10, Bottom: 9}, Spacing: 10}, Children: []Widget{
 		Label{AssignTo: &a.frpServerBannerTitle, Text: tr("当前连接服务器", "Connected Server"), TextColor: uiMuted, Font: uiFont(9, true), NoPrefix: true},
-		Label{AssignTo: &a.frpServerAddrLabel, Text: "—", TextColor: uiBlue, Font: uiMonoFont(11, true), EllipsisMode: EllipsisEnd, StretchFactor: 1, NoPrefix: true},
+		Label{AssignTo: &a.frpServerAddrLabel, Text: "—", TextColor: uiBlue, Font: uiMonoFont(13, true), EllipsisMode: EllipsisEnd, StretchFactor: 1, NoPrefix: true},
 		eyeButton(&a.frpServerEye, tr("显示或隐藏服务器地址", "Show or hide server address"), func() bool { return !a.frpServerHidden }, a.toggleFRPServerEye),
 	}}, fill: uiBlueSoft, radius: 10, border: borderColor(uiBlueBorder), hud: false}
 
@@ -306,7 +306,7 @@ func (a *desktop) buildFRPPage() Widget {
 	pickBtn := makeActionView(&a.frpPickProcessButton, tr("选择进程", "Processes"), btnSecondary, 88, 30, 7, 9, false, a.showLocalProcessPicker)
 	quickAddBtn := makeActionView(&a.frpQuickAddButton, tr("+ 添加映射", "+ Add Rule"), btnPrimary, 108, 30, 7, 9, true, a.quickAddFRPMapping)
 
-	quickComposer := roundView{Composite: Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{Margins: Margins{Left: 14, Top: 8, Right: 14, Bottom: 9}, Spacing: 10, Alignment: AlignHNearVNear}, Children: []Widget{
+	quickComposer := roundView{Composite: Composite{MinSize: Size{Height: 64}, MaxSize: Size{Height: 64}, Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{Margins: Margins{Left: 14, Top: 8, Right: 14, Bottom: 9}, Spacing: 10, Alignment: AlignHNearVNear}, Children: []Widget{
 		quickField(tr("本地 IP", "Local IP"), &localIPLbl, &a.frpQuickLocalIP, "127.0.0.1", "127.0.0.1", 108, 0),
 		quickField(tr("本地端口", "Local Port"), &localPortLbl, &a.frpQuickLocalPort, "", "25565", 74, 0),
 		makeRightArrowView(18, 45, 32, func() walk.Color { return uiTableAlt }, func() walk.Color { return uiBlue }),
@@ -325,7 +325,7 @@ func (a *desktop) buildFRPPage() Widget {
 		}},
 	}}, fill: uiTableAlt, radius: 10, border: borderColor(uiBorder), hud: false}
 
-	quickCard := roundView{Composite: Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 18, Top: 14, Right: 18, Bottom: 14}, Spacing: 10}, Children: []Widget{
+	quickCard := roundView{Composite: Composite{MinSize: Size{Height: 190}, MaxSize: Size{Height: 190}, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 18, Top: 14, Right: 18, Bottom: 14}, Spacing: 10}, Children: []Widget{
 		headerRow,
 		serverEndpointBanner,
 		quickComposer,

@@ -174,3 +174,34 @@ func TestHeartbeatAndUnchangedCandidatesThrottleDiskWrites(t *testing.T) {
 		t.Fatalf("invalid client version persisted: %q", v)
 	}
 }
+
+func TestOpenRecoversFromBackupWhenStateCorrupted(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.CreateNetwork("primary", "a valid password", "10.240.0.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Second mutation writes .bak with previous committed state ("primary").
+	if _, err := store.CreateNetwork("secondary", "a valid password", "10.241.0.0/24"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path + ".bak"); err != nil {
+		t.Fatalf("expected backup state file %s.bak: %v", path, err)
+	}
+	// Truncate main state.json to simulate power loss.
+	if err := os.WriteFile(path, []byte(`{"networks":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := Open(path)
+	if err != nil {
+		t.Fatalf("expected Open to recover from .bak, got error: %v", err)
+	}
+	if len(recovered.ListNetworks()) == 0 || recovered.ListNetworks()[0].ID != first.ID {
+		t.Fatalf("recovered networks = %+v, want %s", recovered.ListNetworks(), first.ID)
+	}
+}

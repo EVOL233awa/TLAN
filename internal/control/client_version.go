@@ -9,7 +9,6 @@ import (
 
 	"github.com/private-radminlan/lanmesh/core"
 	"github.com/private-radminlan/lanmesh/internal/coreupdate"
-	"github.com/private-radminlan/lanmesh/internal/storage"
 )
 
 // clientVersionHeader is the release version a client reports on every request.
@@ -45,14 +44,13 @@ var (
 	errClientOutdated          = errors.New("client version is too old; update this client")
 )
 
-// clientVersionAllowed reports whether a member may keep using the server. The
-// gate is disabled unless the operator configured server.min_client_version.
-func (s *Server) clientVersionAllowed(credential storage.MemberCredential) error {
+// clientVersionAllowed reports whether a member's reported version may use the
+// server. The gate is disabled unless the operator configured server.min_client_version.
+func (s *Server) clientVersionAllowed(reported string) error {
 	required := strings.TrimSpace(s.MinClientVersion)
 	if required == "" {
 		return nil
 	}
-	reported, _ := s.Store.ClientVersion(core.DeviceID(credential.DeviceID))
 	return evaluateClientVersion(required, reported)
 }
 
