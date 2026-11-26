@@ -24,7 +24,11 @@ func runPowerShell(runner Runner, script string) ([]byte, error) {
 	for i, value := range units {
 		binary.LittleEndian.PutUint16(data[i*2:], value)
 	}
-	return runner.Run(systemPowerShell(), "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(data))
+	shell, err := systemPowerShell()
+	if err != nil {
+		return nil, err
+	}
+	return runner.Run(shell, "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(data))
 }
 
 func cleanupResource(record ResourceRecord, runner Runner) error {

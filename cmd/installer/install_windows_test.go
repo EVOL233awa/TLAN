@@ -109,6 +109,11 @@ func TestValidateInstallDirRejectsUnsafePaths(t *testing.T) {
 		`relative\TLAN`,
 		`\\attacker\share\TLAN`,
 		`\\?\C:\Program Files\TLAN`,
+		// Forward slashes normalize into the \\ prefix, so the check must run
+		// after filepath.Clean.
+		`//attacker/share/TLAN`,
+		`//?/C:/Windows/Temp/TLAN`,
+		`//./C:/Windows/Temp/TLAN`,
 		`C:\`,
 		`C:\TLAN.`,
 		`C:\TLAN \sub`,
