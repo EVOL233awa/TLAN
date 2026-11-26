@@ -92,18 +92,18 @@ sudo systemctl restart tlan
 ```
 
 Outputs are generated at:
-- **Single-File Windows Installer (Recommended)**: `dist\TLAN-Setup-v1.3.0-windows-amd64.exe`
+- **Single-File Windows Installer (Recommended)**: `dist\TLAN-Setup-v1.3.1-windows-amd64.exe`
   - Supports custom installation paths and bundles `TLAN.exe`, `wintun.dll`, and `frpc.exe` into one executable installer.
   - Automatically registers Start Menu shortcuts (visible under **Recently Added** & the Windows **Apps list**), an optional Desktop shortcut, and a **Windows Apps & Features** uninstaller (`TLAN-Uninstall.exe`).
   - Supports toggling **Launch at login** directly during setup.
 - **Portable Directory**: `dist\windows\TLAN.exe` (with `wintun.dll`, `frpc.exe`, `tlan-icon.png`)
-- **Portable Archive**: `dist\TLAN-client-v1.3.0-windows-amd64.zip`
+- **Portable Archive**: `dist\TLAN-client-v1.3.1-windows-amd64.zip`
 
 > **Single-Instance Activation**: Launching `TLAN.exe` while an instance is already running automatically brings the existing window to the foreground instead of opening duplicate instances.
 
 ---
 
-## Versioning & Compatibility Policy (v1.3.0)
+## Versioning & Compatibility Policy (v1.3.1)
 
 TLAN uses **`Major.Minor.Patch`** semantic versioning:
 

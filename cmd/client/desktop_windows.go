@@ -34,6 +34,12 @@ type desktopSession struct {
 	done   chan struct{}
 	engine *mesh.Engine
 }
+
+type dragDetachedChild struct {
+	hwnd win.HWND
+	rect win.RECT
+}
+
 type desktop struct {
 	window                                                                                                             *walk.MainWindow
 	code                                                                                                               *walk.LineEdit
@@ -133,6 +139,16 @@ type desktop struct {
 	explicitExit                                                                                                       atomic.Bool
 	inSizeMove                                                                                                         atomic.Bool
 	resizedDuringMove                                                                                                  atomic.Bool
+	minTrackValid                                                                                                      atomic.Bool
+	minTrackX, minTrackY                                                                                               int32
+	minTrackDPI                                                                                                        int
+	dragSnapActive                                                                                                     bool
+	dragSnapDC                                                                                                         win.HDC
+	dragSnapBMP                                                                                                        win.HBITMAP
+	dragSnapOldBMP                                                                                                     win.HGDIOBJ
+	dragSnapW, dragSnapH                                                                                               int32
+	dragSnapFocus                                                                                                      win.HWND
+	dragSnapChildren                                                                                                   []dragDetachedChild
 	origWndProc                                                                                                        uintptr
 	wndProcCB                                                                                                          uintptr
 	trayCacheInit                                                                                                      bool
@@ -347,6 +363,7 @@ func (a *desktop) toggleLanguage() {
 }
 
 func (a *desktop) applyLanguage(lang string) {
+	a.minTrackValid.Store(false)
 	setActiveLanguage(lang)
 	a.retranslateUI()
 }

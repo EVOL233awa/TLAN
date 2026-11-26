@@ -7,6 +7,7 @@ import (
 	"math"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
@@ -844,6 +845,152 @@ func (a *desktop) requestCleanRelayout() {
 	a.repaintWindowTree()
 }
 
+var (
+	dragUser32DLL   = windows.NewLazySystemDLL("user32.dll")
+	procPrintWindow = dragUser32DLL.NewProc("PrintWindow")
+	procIsWindow    = dragUser32DLL.NewProc("IsWindow")
+)
+
+func isValidWindow(h win.HWND) bool {
+	if h == 0 {
+		return false
+	}
+	ok, _, _ := procIsWindow.Call(uintptr(h))
+	return ok != 0
+}
+
+func (a *desktop) enterDragSnapshot(h win.HWND) {
+	if a.dragSnapActive || h == 0 || win.IsZoomed(h) || win.IsIconic(h) {
+		return
+	}
+	var cr win.RECT
+	if !win.GetClientRect(h, &cr) {
+		return
+	}
+	w, hgt := cr.Right-cr.Left, cr.Bottom-cr.Top
+	if w <= 0 || hgt <= 0 {
+		return
+	}
+	hdc := win.GetDC(h)
+	if hdc == 0 {
+		return
+	}
+	memDC := win.CreateCompatibleDC(hdc)
+	bmp := win.CreateCompatibleBitmap(hdc, w, hgt)
+	win.ReleaseDC(h, hdc)
+	if memDC == 0 || bmp == 0 {
+		if bmp != 0 {
+			win.DeleteObject(win.HGDIOBJ(bmp))
+		}
+		if memDC != 0 {
+			win.DeleteDC(memDC)
+		}
+		return
+	}
+	old := win.SelectObject(memDC, win.HGDIOBJ(bmp))
+	const pwClientOnlyRenderFull = 0x00000001 | 0x00000002
+	ok, _, _ := procPrintWindow.Call(uintptr(h), uintptr(memDC), pwClientOnlyRenderFull)
+	if ok == 0 {
+		win.SelectObject(memDC, old)
+		win.DeleteObject(win.HGDIOBJ(bmp))
+		win.DeleteDC(memDC)
+		return
+	}
+
+	var children []dragDetachedChild
+	for child := win.GetWindow(h, win.GW_CHILD); child != 0; child = win.GetWindow(child, win.GW_HWNDNEXT) {
+		var wr win.RECT
+		win.GetWindowRect(child, &wr)
+		tl := win.POINT{X: wr.Left, Y: wr.Top}
+		br := win.POINT{X: wr.Right, Y: wr.Bottom}
+		win.ScreenToClient(h, &tl)
+		win.ScreenToClient(h, &br)
+		children = append(children, dragDetachedChild{
+			hwnd: child,
+			rect: win.RECT{Left: tl.X, Top: tl.Y, Right: br.X, Bottom: br.Y},
+		})
+	}
+	if len(children) == 0 {
+		win.SelectObject(memDC, old)
+		win.DeleteObject(win.HGDIOBJ(bmp))
+		win.DeleteDC(memDC)
+		return
+	}
+
+	focus := win.GetFocus()
+	if focus != 0 && win.IsChild(h, focus) {
+		a.dragSnapFocus = focus
+	} else {
+		a.dragSnapFocus = 0
+	}
+	a.dragSnapDC = memDC
+	a.dragSnapBMP = bmp
+	a.dragSnapOldBMP = old
+	a.dragSnapW = w
+	a.dragSnapH = hgt
+	a.dragSnapChildren = children
+	a.dragSnapActive = true
+
+	// Temporarily reparent direct children to HWND_MESSAGE (-3) so MainWindow
+	// has 0 child HWNDs during move drag and DWM tracks at full native refresh rate.
+	const hwndMessage = win.HWND(^uintptr(2))
+	for _, ch := range children {
+		win.SetParent(ch.hwnd, hwndMessage)
+	}
+	win.InvalidateRect(h, nil, false)
+	win.UpdateWindow(h)
+}
+
+func (a *desktop) exitDragSnapshot(h win.HWND) {
+	if !a.dragSnapActive {
+		return
+	}
+	a.dragSnapActive = false
+
+	children := a.dragSnapChildren
+	a.dragSnapChildren = nil
+	if isValidWindow(h) {
+		for _, ch := range children {
+			if isValidWindow(ch.hwnd) {
+				win.SetParent(ch.hwnd, h)
+				win.SetWindowPos(
+					ch.hwnd,
+					0,
+					ch.rect.Left,
+					ch.rect.Top,
+					ch.rect.Right-ch.rect.Left,
+					ch.rect.Bottom-ch.rect.Top,
+					win.SWP_NOZORDER|win.SWP_NOACTIVATE,
+				)
+			}
+		}
+	}
+
+	if a.dragSnapDC != 0 {
+		if a.dragSnapOldBMP != 0 {
+			win.SelectObject(a.dragSnapDC, a.dragSnapOldBMP)
+			a.dragSnapOldBMP = 0
+		}
+		win.DeleteDC(a.dragSnapDC)
+		a.dragSnapDC = 0
+	}
+	if a.dragSnapBMP != 0 {
+		win.DeleteObject(win.HGDIOBJ(a.dragSnapBMP))
+		a.dragSnapBMP = 0
+	}
+	a.dragSnapW = 0
+	a.dragSnapH = 0
+
+	focus := a.dragSnapFocus
+	a.dragSnapFocus = 0
+	if focus != 0 && isValidWindow(focus) && isValidWindow(h) && win.IsChild(h, focus) {
+		win.SetFocus(focus)
+	}
+	if isValidWindow(h) {
+		win.RedrawWindow(h, nil, 0, win.RDW_INVALIDATE|win.RDW_ALLCHILDREN|win.RDW_UPDATENOW)
+	}
+}
+
 func (a *desktop) installSizeMoveHook() {
 	if a.window == nil || a.window.IsDisposed() {
 		return
@@ -857,51 +1004,84 @@ func (a *desktop) installSizeMoveHook() {
 		win.SetWindowLong(hwnd, win.GWL_STYLE, style|win.WS_CLIPCHILDREN)
 	}
 	if a.wndProcCB == 0 {
-		inMoveDrag := false
 		a.wndProcCB = windows.NewCallback(func(h win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 			switch msg {
-			case win.WM_NCLBUTTONDOWN:
-				if wParam == win.HTCAPTION {
-					inMoveDrag = true
-					a.inSizeMove.Store(true)
-					a.resizedDuringMove.Store(false)
-					var res uintptr
-					if prev := a.origWndProc; prev != 0 {
-						res = win.CallWindowProc(prev, h, msg, wParam, lParam)
-					} else {
-						res = win.DefWindowProc(h, msg, wParam, lParam)
-					}
-					inMoveDrag = false
-					if a.inSizeMove.Swap(false) {
-						a.ensureAnimLoop()
-						if a.resizedDuringMove.Swap(false) {
-							a.requestCleanRelayout()
-						}
-					}
-					return res
+			case win.WM_ERASEBKGND:
+				if a.dragSnapActive {
+					return 1
 				}
+			case win.WM_PAINT:
+				if a.dragSnapActive && a.dragSnapDC != 0 {
+					var ps win.PAINTSTRUCT
+					dc := win.BeginPaint(h, &ps)
+					if dc != 0 {
+						win.BitBlt(dc, 0, 0, a.dragSnapW, a.dragSnapH, a.dragSnapDC, 0, 0, win.SRCCOPY)
+						win.EndPaint(h, &ps)
+					}
+					return 0
+				}
+			case win.WM_GETMINMAXINFO:
+				if lParam != 0 && a.window != nil && !a.window.IsDisposed() {
+					dpi := a.window.DPI()
+					if a.minTrackValid.Load() && a.minTrackDPI == dpi && a.minTrackX > 0 && a.minTrackY > 0 {
+						mmi := *(**win.MINMAXINFO)(unsafe.Pointer(&lParam))
+						mmi.PtMinTrackSize = win.POINT{X: a.minTrackX, Y: a.minTrackY}
+						return 0
+					}
+					if prev := a.origWndProc; prev != 0 {
+						res := win.CallWindowProc(prev, h, msg, wParam, lParam)
+						mmi := *(**win.MINMAXINFO)(unsafe.Pointer(&lParam))
+						minW := int32(a.window.IntFrom96DPI(940))
+						minH := int32(a.window.IntFrom96DPI(620))
+						if mmi.PtMinTrackSize.X >= minW && mmi.PtMinTrackSize.Y >= minH {
+							a.minTrackX = mmi.PtMinTrackSize.X
+							a.minTrackY = mmi.PtMinTrackSize.Y
+							a.minTrackDPI = dpi
+							a.minTrackValid.Store(true)
+						}
+						return res
+					}
+				}
+			case win.WM_DPICHANGED:
+				a.exitDragSnapshot(h)
+				a.minTrackValid.Store(false)
 			case win.WM_ENTERSIZEMOVE:
 				a.inSizeMove.Store(true)
 				a.resizedDuringMove.Store(false)
 			case win.WM_EXITSIZEMOVE:
-				inMoveDrag = false
+				a.exitDragSnapshot(h)
 				a.inSizeMove.Store(false)
 				a.ensureAnimLoop()
 				if a.resizedDuringMove.Swap(false) {
 					a.requestCleanRelayout()
 				}
 			case win.WM_SIZING:
-				inMoveDrag = false
+				a.exitDragSnapshot(h)
 			case win.WM_MOVING:
-				inMoveDrag = true
-				if a.inSizeMove.Load() {
-					return win.DefWindowProc(h, msg, wParam, lParam)
+				if a.inSizeMove.Load() && !a.dragSnapActive {
+					a.enterDragSnapshot(h)
 				}
-			case win.WM_MOVE, win.WM_WINDOWPOSCHANGING, win.WM_WINDOWPOSCHANGED:
-				if a.inSizeMove.Load() && inMoveDrag {
-					return win.DefWindowProc(h, msg, wParam, lParam)
+				return win.DefWindowProc(h, msg, wParam, lParam)
+			case win.WM_WINDOWPOSCHANGING:
+				return win.DefWindowProc(h, msg, wParam, lParam)
+			case win.WM_WINDOWPOSCHANGED:
+				if lParam != 0 {
+					wp := *(**win.WINDOWPOS)(unsafe.Pointer(&lParam))
+					if wp.Flags&win.SWP_NOSIZE != 0 && wp.Flags&(win.SWP_SHOWWINDOW|win.SWP_HIDEWINDOW) == 0 {
+						return 0
+					}
 				}
+				a.exitDragSnapshot(h)
+			case win.WM_SIZE:
+				a.exitDragSnapshot(h)
+			case win.WM_MOVE:
+				if a.dragSnapActive {
+					return 0
+				}
+			case win.WM_CLOSE, win.WM_DESTROY:
+				a.exitDragSnapshot(h)
 			case win.WM_NCDESTROY:
+				a.exitDragSnapshot(h)
 				if prev := a.origWndProc; prev != 0 {
 					a.origWndProc = 0
 					win.SetWindowLongPtr(h, win.GWLP_WNDPROC, prev)
@@ -976,6 +1156,7 @@ func (a *desktop) showPage(page int) {
 		a.admin.page.SetVisible(shellVisible && page == pageAdmin)
 	}
 	a.page = page
+	a.minTrackValid.Store(false)
 	a.window.SetSuspended(false)
 	a.requestCleanRelayout()
 	a.invalidateRail()
@@ -1002,7 +1183,7 @@ func (a *desktop) showPage(page int) {
 }
 
 func (a *desktop) ensureAnimLoop() {
-	if a.animLoopActive || !a.animationsEnabled || a.closing.Load() || highContrastEnabled() || a.window == nil || a.window.IsDisposed() {
+	if a.animLoopActive || a.inSizeMove.Load() || !a.animationsEnabled || a.closing.Load() || highContrastEnabled() || a.window == nil || a.window.IsDisposed() {
 		return
 	}
 	if !win.IsWindowVisible(a.window.Handle()) || win.IsIconic(a.window.Handle()) {
