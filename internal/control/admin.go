@@ -357,7 +357,7 @@ func (c *adminConsole) overview(w http.ResponseWriter, requestID string) {
 		serverDisplay = c.server.Store.ServerDisplay()
 	}
 	writeAdminData(w, http.StatusOK, requestID, adminOverview{
-		Service: "tlan-control", Version: "1.0.0", Stage: "encrypted-ipv4-mesh",
+		Service: "tlan-control", Version: c.server.currentVersion(), Stage: "encrypted-ipv4-mesh",
 		UptimeSeconds: uptime, ControlListen: c.server.ControlListen, ControlTLS: c.server.ControlTLS,
 		AdminListen: c.server.AdminListen, AdminTLS: c.server.AdminTLS, DataDirSummary: c.server.DataDirSummary,
 		Network: network, MemberCount: len(devices), OnlineCount: online, BlockedCount: blocked,

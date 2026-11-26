@@ -102,7 +102,10 @@ type desktop struct {
 	page                                                                                                               int
 	offState, offNetwork                                                                                               *walk.Label
 	offHint                                                                                                            *walk.Label
-	deviceName, address, badge, status, networkTitle, serverIdentity, memberCount, traffic, noticeTitle, noticeMessage *walk.Label
+	deviceName, address, badge, status, networkTitle, serverIdentity, memberCount, trafficUp, trafficDown, noticeTitle, noticeMessage *walk.Label
+	prevTrafficSent, prevTrafficRecv                                                                                                 uint64
+	lastUpRate, lastDownRate                                                                                                         float64
+	prevTrafficAt                                                                                                                    time.Time
 	empty                                                                                                              *walk.Label
 	peers                                                                                                              *walk.TableView
 	peerModel                                                                                                          *desktopTableModel
@@ -160,9 +163,16 @@ func runDesktop() {
 	}
 	settings, settingsErr := clientidentity.LoadSettings()
 	setActiveLanguage(settings.Language)
-	instance, err := windows.CreateMutex(nil, false, windows.StringToUTF16Ptr("Local\\TLAN-Desktop"))
+	instance, activateEvent, alreadyRunning, err := acquireSingleInstanceNamed(singleInstanceMutexName, singleInstanceEventName)
 	if instance != 0 {
 		defer windows.CloseHandle(instance)
+	}
+	if activateEvent != 0 {
+		defer windows.CloseHandle(activateEvent)
+	}
+	if err == nil && alreadyRunning {
+		signalSingleInstanceEvent(singleInstanceEventName)
+		return
 	}
 	if err != nil {
 		walk.MsgBox(nil, appName, tr("客户端已经运行，请使用已有窗口。", "TLAN is already running. Use the existing window."), walk.MsgBoxOK|walk.MsgBoxIconInformation)
@@ -257,6 +267,11 @@ func runDesktop() {
 		}
 	}
 	a.window.Closing().Attach(a.handleWindowClosing)
+	if activateEvent != 0 {
+		go watchActivateEvent(ctx, activateEvent, func() {
+			a.runOnUI(a.showWindow)
+		})
+	}
 	if settingsErr != nil {
 		a.showError(tr("读取本机配置", "Load local settings"), settingsErr)
 	}
@@ -279,7 +294,7 @@ func runDesktop() {
 					a.updateStatus()
 					a.updateTrayMenu()
 					n++
-					if n%5 == 0 {
+					if (a.engine != nil && n%2 == 0) || n%5 == 0 {
 						a.refreshMembers()
 					}
 					if n%2 == 0 && a.page == pageFRP {
@@ -685,8 +700,18 @@ func (a *desktop) connectedControlEndpoint() string {
 	return "—"
 }
 
-func formatTrafficSummary(sent, recv uint64) string {
-	return trf("上传 ↑ %s   下载 ↓ %s", "Up ↑ %s   Down ↓ %s", formatTraffic(sent), formatTraffic(recv))
+func formatTrafficRate(bytesPerSec float64) string {
+	if bytesPerSec <= 0 {
+		return "0 B/s"
+	}
+	return formatTraffic(uint64(bytesPerSec+0.5)) + "/s"
+}
+
+func formatTrafficLine(isUpload bool, bytesPerSec float64, total uint64) string {
+	if isUpload {
+		return trf("上传 ↑ %s · %s", "Up ↑ %s · %s", formatTrafficRate(bytesPerSec), formatTraffic(total))
+	}
+	return trf("下载 ↓ %s · %s", "Down ↓ %s · %s", formatTrafficRate(bytesPerSec), formatTraffic(total))
 }
 
 func setLabelIfChanged(lbl *walk.Label, text string) bool {
@@ -924,6 +949,13 @@ func (a *desktop) startPower() {
 		return
 	}
 	a.dismissNotice()
+	a.prevTrafficSent = 0
+	a.prevTrafficRecv = 0
+	a.lastUpRate = 0
+	a.lastDownRate = 0
+	a.prevTrafficAt = time.Time{}
+	setLabelIfChanged(a.trafficUp, formatTrafficLine(true, 0, 0))
+	setLabelIfChanged(a.trafficDown, formatTrafficLine(false, 0, 0))
 	a.busy = true
 	a.powerState = 2
 	a.updatePowerButtons()
@@ -1117,7 +1149,13 @@ func (a *desktop) setPoweredOff() {
 	a.badge.SetTextColor(uiMuted)
 	a.peers.SetVisible(false)
 	a.setEmptyState(true, tr("虚拟局域网未连接\r\n连接后此处将显示成员列表与延迟", "Virtual LAN not connected\r\nConnect to display members and latency"))
-	setLabelIfChanged(a.traffic, formatTrafficSummary(0, 0))
+	a.prevTrafficSent = 0
+	a.prevTrafficRecv = 0
+	a.lastUpRate = 0
+	a.lastDownRate = 0
+	a.prevTrafficAt = time.Time{}
+	setLabelIfChanged(a.trafficUp, formatTrafficLine(true, 0, 0))
+	setLabelIfChanged(a.trafficDown, formatTrafficLine(false, 0, 0))
 	setLabelIfChanged(a.memberCount, tr("未连接", "Offline"))
 	a.showPage(pagePower)
 }
@@ -1333,7 +1371,31 @@ func (a *desktop) updateStatus() {
 	}
 	a.setEmptyState(len(rows) == 0, tr("正在获取在线成员…", "Loading members…"))
 	setLabelIfChanged(a.memberCount, trf("%d / %d 在线", "%d / %d online", online, len(rows)))
-	setLabelIfChanged(a.traffic, formatTrafficSummary(s.Sent, s.Received))
+	now := time.Now()
+	if a.prevTrafficAt.IsZero() {
+		a.prevTrafficSent = s.Sent
+		a.prevTrafficRecv = s.Received
+		a.lastUpRate = 0
+		a.lastDownRate = 0
+		a.prevTrafficAt = now
+	} else if dt := now.Sub(a.prevTrafficAt); dt >= time.Second {
+		secs := dt.Seconds()
+		if s.Sent >= a.prevTrafficSent {
+			a.lastUpRate = float64(s.Sent-a.prevTrafficSent) / secs
+		} else {
+			a.lastUpRate = 0
+		}
+		if s.Received >= a.prevTrafficRecv {
+			a.lastDownRate = float64(s.Received-a.prevTrafficRecv) / secs
+		} else {
+			a.lastDownRate = 0
+		}
+		a.prevTrafficSent = s.Sent
+		a.prevTrafficRecv = s.Received
+		a.prevTrafficAt = now
+	}
+	setLabelIfChanged(a.trafficUp, formatTrafficLine(true, a.lastUpRate, s.Sent))
+	setLabelIfChanged(a.trafficDown, formatTrafficLine(false, a.lastDownRate, s.Received))
 }
 func (a *desktop) hasRunningFRP() bool {
 	for _, manager := range a.frpManagers {

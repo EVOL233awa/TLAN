@@ -38,20 +38,20 @@ func (m *frpRuleTableModel) Value(row, col int) interface{} {
 }
 
 func (m *frpRuleTableModel) setRows(rows [][]string) {
-	equal := len(rows) == len(m.rows)
-	if equal {
+	if len(rows) == len(m.rows) {
 		for i := range rows {
 			if strings.Join(rows[i], "\x00") != strings.Join(m.rows[i], "\x00") {
-				equal = false
-				break
+				m.rows[i] = rows[i]
+				m.PublishRowChanged(i)
 			}
 		}
-	}
-	if equal {
 		return
 	}
 	m.rows = rows
 	m.PublishRowsReset()
+	if len(rows) > 0 {
+		m.PublishRowsChanged(0, len(rows)-1)
+	}
 }
 
 func (a *desktop) frpServerHost() string {
@@ -293,9 +293,9 @@ func (a *desktop) buildFRPPage() Widget {
 	}}, fill: uiBlueSoft, radius: 10, border: borderColor(uiBlueBorder), hud: false}
 
 	quickField := func(label string, labelAssign **walk.Label, assign **walk.LineEdit, initial, cue string, minWidth, stretch int) Composite {
-		return Composite{StretchFactor: stretch, Background: SolidColorBrush{Color: uiTableAlt}, Layout: VBox{MarginsZero: true, Spacing: 5}, Children: []Widget{
-			Label{AssignTo: labelAssign, Text: label, TextColor: uiMuted, Font: uiFont(8, true), NoPrefix: true},
-			LineEdit{AssignTo: assign, Text: initial, CueBanner: cue, MinSize: Size{Width: minWidth, Height: 32}, MaxSize: Size{Height: 32}, Font: uiFont(9, false), TextColor: uiInk, Background: SolidColorBrush{Color: uiWhite}, OnKeyDown: func(k walk.Key) {
+		return Composite{StretchFactor: stretch, Background: SolidColorBrush{Color: uiTableAlt}, Layout: VBox{MarginsZero: true, Spacing: 3}, Children: []Widget{
+			Label{AssignTo: labelAssign, Text: label, TextColor: uiMuted, MinSize: Size{Height: 16}, MaxSize: Size{Height: 16}, Font: uiFont(8, true), NoPrefix: true},
+			LineEdit{AssignTo: assign, Text: initial, CueBanner: cue, MinSize: Size{Width: minWidth, Height: 26}, MaxSize: Size{Height: 26}, Font: uiFont(9, false), TextColor: uiInk, Background: SolidColorBrush{Color: uiWhite}, OnKeyDown: func(k walk.Key) {
 				if k == walk.KeyReturn {
 					a.quickAddFRPMapping()
 				}
@@ -303,24 +303,21 @@ func (a *desktop) buildFRPPage() Widget {
 		}}
 	}
 
-	pickBtn := makeActionView(&a.frpPickProcessButton, tr("选择进程", "Processes"), btnSecondary, 88, 32, 7, 9, false, a.showLocalProcessPicker)
-	quickAddBtn := makeActionView(&a.frpQuickAddButton, tr("+ 添加映射", "+ Add Rule"), btnPrimary, 108, 32, 8, 9, true, a.quickAddFRPMapping)
+	pickBtn := makeActionView(&a.frpPickProcessButton, tr("选择进程", "Processes"), btnSecondary, 88, 30, 7, 9, false, a.showLocalProcessPicker)
+	quickAddBtn := makeActionView(&a.frpQuickAddButton, tr("+ 添加映射", "+ Add Rule"), btnPrimary, 108, 30, 7, 9, true, a.quickAddFRPMapping)
 
-	quickComposer := roundView{Composite: Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{Margins: Margins{Left: 14, Top: 11, Right: 14, Bottom: 12}, Spacing: 10}, Children: []Widget{
+	quickComposer := roundView{Composite: Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{Margins: Margins{Left: 14, Top: 8, Right: 14, Bottom: 9}, Spacing: 10, Alignment: AlignHNearVNear}, Children: []Widget{
 		quickField(tr("本地 IP", "Local IP"), &localIPLbl, &a.frpQuickLocalIP, "127.0.0.1", "127.0.0.1", 108, 0),
 		quickField(tr("本地端口", "Local Port"), &localPortLbl, &a.frpQuickLocalPort, "", "25565", 74, 0),
-		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: VBox{MarginsZero: true, Spacing: 5}, Children: []Widget{
-			Label{Text: " ", Font: uiFont(8, true), NoPrefix: true},
-			Label{Text: "→", TextColor: uiBlue, Font: uiFont(12, true), MinSize: Size{Width: 18, Height: 32}, MaxSize: Size{Width: 18, Height: 32}, TextAlignment: AlignCenter, NoPrefix: true},
-		}},
+		makeRightArrowView(18, 45, 32, func() walk.Color { return uiTableAlt }, func() walk.Color { return uiBlue }),
 		quickField(tr("服务器端口", "Remote Port"), &remotePortLbl, &a.frpQuickRemotePort, "60000", "60000", 80, 0),
-		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: VBox{MarginsZero: true, Spacing: 5}, Children: []Widget{
-			Label{AssignTo: &protoLbl, Text: tr("协议", "Proto"), TextColor: uiMuted, Font: uiFont(8, true), NoPrefix: true},
-			comboBoxView{ComboBox: ComboBox{AssignTo: &a.frpQuickProto, Model: []string{"TCP", "UDP", "TCP+UDP"}, CurrentIndex: 0, MinSize: Size{Width: 92, Height: 32}, MaxSize: Size{Height: 32}, Font: uiFont(10, false)}},
+		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: VBox{MarginsZero: true, Spacing: 3}, Children: []Widget{
+			Label{AssignTo: &protoLbl, Text: tr("协议", "Proto"), TextColor: uiMuted, MinSize: Size{Height: 16}, MaxSize: Size{Height: 16}, Font: uiFont(8, true), NoPrefix: true},
+			comboBoxView{ComboBox: ComboBox{AssignTo: &a.frpQuickProto, Model: []string{"TCP", "UDP", "TCP+UDP"}, CurrentIndex: 0, MinSize: Size{Width: 92, Height: 26}, MaxSize: Size{Height: 26}, Font: uiFont(9, false)}},
 		}},
 		quickField(tr("名称（可选）", "Name (optional)"), &nameLbl, &a.frpQuickName, "", tr("自动生成或自定义", "Auto or custom"), 110, 1),
-		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: VBox{MarginsZero: true, Spacing: 5}, Children: []Widget{
-			Label{Text: " ", Font: uiFont(8, true), NoPrefix: true},
+		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: VBox{MarginsZero: true, Spacing: 3}, Children: []Widget{
+			VSpacer{Size: 14},
 			Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
 				pickBtn,
 				quickAddBtn,

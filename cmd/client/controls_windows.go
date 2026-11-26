@@ -336,10 +336,14 @@ func (v clickableImageView) Create(builder *Builder) error {
 	if original != nil {
 		*original = iv
 	}
+	iv.SetPaintMode(walk.PaintNoErase)
 	return walk.InitWrapperWindow(&handCursorImageView{ImageView: iv})
 }
 
 func (v *handCursorImageView) WndProc(hwnd win.HWND, msg uint32, w, l uintptr) uintptr {
+	if msg == win.WM_ERASEBKGND {
+		return 1
+	}
 	if msg == win.WM_SETCURSOR && v.Enabled() {
 		if cur := handCursor(); cur != 0 {
 			win.SetCursor(cur)
@@ -1505,4 +1509,45 @@ func mixColor(from, to walk.Color, amount float64) walk.Color {
 		return uint8(math.Round(a + (b-a)*amount))
 	}
 	return walk.RGB(channel(0), channel(8), channel(16))
+}
+
+// makeRightArrowView renders an antialiased right arrow centered horizontally
+// and at centerYDP (96-DPI offset from top, or vertical middle if <= 0).
+func makeRightArrowView(width, height, centerYDP int, bg func() walk.Color, fg func() walk.Color) CustomWidget {
+	var cw *walk.CustomWidget
+	return CustomWidget{
+		AssignTo:            &cw,
+		MinSize:             Size{Width: width, Height: height},
+		MaxSize:             Size{Width: width, Height: height},
+		PaintMode:           PaintNoErase,
+		InvalidatesOnResize: true,
+		PaintPixels: func(canvas *walk.Canvas, _ walk.Rectangle) error {
+			if cw == nil || cw.IsDisposed() {
+				return nil
+			}
+			cb := cw.ClientBoundsPixels()
+			if cb.Width <= 0 || cb.Height <= 0 {
+				return nil
+			}
+			r := win.RECT{Right: int32(cb.Width), Bottom: int32(cb.Height)}
+			return drawBufferedSmooth(canvas.HDC(), r, bg(), func(c *smoothCanvas, local win.RECT) {
+				dpi := cw.DPI()
+				cx := int(local.Left+local.Right) / 2
+				cy := int(local.Top+local.Bottom) / 2
+				if centerYDP > 0 {
+					cy = int(local.Top) + walk.IntFrom96DPI(centerYDP, dpi)
+				}
+				halfLen := walk.IntFrom96DPI(6, dpi)
+				tip := walk.IntFrom96DPI(3, dpi)
+				color := fg()
+				stroke := float32(walk.IntFrom96DPI(16, dpi)) / 10.0
+				if stroke < 1.5 {
+					stroke = 1.5
+				}
+				c.lineAlpha(cx-halfLen, cy, cx+halfLen, cy, color, 255, stroke)
+				c.lineAlpha(cx+halfLen-tip, cy-tip, cx+halfLen, cy, color, 255, stroke)
+				c.lineAlpha(cx+halfLen-tip, cy+tip, cx+halfLen, cy, color, 255, stroke)
+			})
+		},
+	}
 }

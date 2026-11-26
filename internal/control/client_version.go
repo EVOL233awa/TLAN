@@ -16,7 +16,28 @@ import (
 // The value is advisory: the gate exists to force upgrades, not to authenticate
 // a client, so a client that lies about its version is only choosing to skip an
 // upgrade it was asked to perform.
-const clientVersionHeader = "X-Client-Version"
+const (
+	clientVersionHeader = "X-Client-Version"
+	serverVersionHeader = "X-Server-Version"
+)
+
+func (s *Server) currentVersion() string {
+	if s != nil && strings.TrimSpace(s.ServerVersion) != "" {
+		return strings.TrimSpace(s.ServerVersion)
+	}
+	return core.CurrentVersion
+}
+
+func (s *Server) checkMajorMinor(reported string) error {
+	if s == nil || !s.RequireMajorMinorMatch {
+		return nil
+	}
+	reported = strings.TrimSpace(reported)
+	if reported == "" {
+		return fmt.Errorf("version_mismatch: %w (server %s)", errClientVersionMissing, s.currentVersion())
+	}
+	return core.MajorMinorCompatible(s.currentVersion(), reported)
+}
 
 var (
 	errClientVersionMissing    = errors.New("client version was not reported; update this client")

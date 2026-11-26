@@ -14,7 +14,7 @@ import (
 func TestBuildDiagnosticSummaryTranslatesChecks(t *testing.T) {
 	export := diagnosticExport{
 		SchemaVersion: 1,
-		AppVersion:    "v1.0.0",
+		AppVersion:    "v1.1.0",
 		GeneratedAt:   time.Now().UTC(),
 		Checks: []clientapi.DiagnosticCheck{
 			{Name: "control_health", Status: "pass", Detail: "控制服务可访问，耗时 18 ms"},

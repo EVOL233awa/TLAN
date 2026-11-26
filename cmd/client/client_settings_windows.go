@@ -38,7 +38,7 @@ func (a *desktop) showClientSettingsDialog() {
 
 	var dlg *walk.Dialog
 	var usernameEdit *walk.LineEdit
-	var closeToTray, launchAtLogin, multipath *walk.CheckBox
+	var launchAtLogin, multipath *walk.CheckBox
 	var mtu *walk.NumberEdit
 	var appearance, language *walk.ComboBox
 	var saveButton, closeButton *walk.PushButton
@@ -48,7 +48,7 @@ func (a *desktop) showClientSettingsDialog() {
 	}
 	err := (Dialog{
 		AssignTo: &dlg, Title: tr("设置", "Settings"), Icon: a.appIcon,
-		Size: Size{Width: 490, Height: 465}, MinSize: Size{Width: 450, Height: 430},
+		Size: Size{Width: 490, Height: 435}, MinSize: Size{Width: 450, Height: 400},
 		Font:         uiFont(10, false),
 		Background:   SolidColorBrush{Color: uiWhite},
 		Layout:       VBox{Margins: Margins{Left: 24, Top: 22, Right: 24, Bottom: 20}, Spacing: 12},
@@ -70,7 +70,6 @@ func (a *desktop) showClientSettingsDialog() {
 				comboBoxView{ComboBox: ComboBox{AssignTo: &appearance, Model: []string{tr("跟随系统", "Follow system"), tr("浅色", "Light"), tr("深色", "Dark")}, CurrentIndex: appearanceIndex(a.settings.Appearance), Font: uiFont(9, false), MinSize: Size{Width: 180, Height: 30}, MaxSize: Size{Height: 30}, Accessibility: Accessibility{Name: tr("界面外观", "Appearance")}}},
 				HSpacer{},
 			}},
-			themedCheckBox(&closeToTray, tr("关闭窗口时最小化到托盘", "Minimize to tray on close"), a.settings.CloseToTray),
 			themedCheckBox(&launchAtLogin, tr("开机时自动启动", "Launch at login"), a.settings.LaunchAtLogin),
 			Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true, Spacing: 12}, Children: []Widget{
 				formLabel(tr("虚拟网卡 MTU", "Virtual Adapter MTU"), 118),
@@ -95,7 +94,7 @@ func (a *desktop) showClientSettingsDialog() {
 				HSpacer{},
 				actionButton(nil, tr("取消", "Cancel"), false, 84, func() { dlg.Cancel() }),
 				actionButton(&saveButton, tr("保存设置", "Save"), true, 96, func() {
-					if err := a.applyClientSettings(usernameEdit.Text(), closeToTray.Checked(), launchAtLogin.Checked(), multipath.Checked(), int(mtu.Value()), appearanceFromIndex(appearance.CurrentIndex()), languageFromIndex(language.CurrentIndex())); err != nil {
+					if err := a.applyClientSettings(usernameEdit.Text(), launchAtLogin.Checked(), multipath.Checked(), int(mtu.Value()), appearanceFromIndex(appearance.CurrentIndex()), languageFromIndex(language.CurrentIndex())); err != nil {
 						walk.MsgBox(dlg, tr("保存客户端设置失败", "Failed to save settings"), err.Error(), walk.MsgBoxOK|walk.MsgBoxIconError)
 						return
 					}
@@ -225,7 +224,7 @@ func (a *desktop) updateCustomUsername(name string) error {
 	return nil
 }
 
-func (a *desktop) applyClientSettings(rawName string, closeToTray, launchAtLogin, multipath bool, mtu int, appearance, language string) error {
+func (a *desktop) applyClientSettings(rawName string, launchAtLogin, multipath bool, mtu int, appearance, language string) error {
 	validName, err := validateCustomUsername(rawName)
 	if err != nil {
 		return err
@@ -234,7 +233,6 @@ func (a *desktop) applyClientSettings(rawName string, closeToTray, launchAtLogin
 	prevDisplayName := a.identity.DisplayName
 	next := previous
 	next.DeviceName = validName
-	next.CloseToTray = closeToTray
 	next.LaunchAtLogin = launchAtLogin
 	next.MultipathReplication = multipath
 	next.Appearance = normalizeAppearance(appearance)

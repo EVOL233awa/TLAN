@@ -1,7 +1,7 @@
 param(
     [string]$ServerURL = '',
     [string]$STUNAddress = '',
-    [string]$Version = ''
+    [string]$Version = '1.1.0'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -104,5 +104,47 @@ if (Test-Path $frpLicensePath) { Copy-Item -Force $frpLicensePath (Join-Path $ou
 Remove-Item -Force -ErrorAction SilentlyContinue $zipPath
 Compress-Archive -Path (Join-Path $outputDir '*') -DestinationPath $zipPath
 
+$installerDir = Join-Path $root 'cmd\installer'
+$installerPayloadDir = Join-Path $installerDir 'payload'
+$installerSyso = Join-Path $installerDir 'tlan_setup_windows_amd64.syso'
+$installerExe = Join-Path $root "dist\TLAN-Setup$versionSuffix-windows-amd64.exe"
+
+Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $installerPayloadDir
+New-Item -ItemType Directory -Force -Path $installerPayloadDir | Out-Null
+Copy-Item -Force (Join-Path $outputDir '*') $installerPayloadDir
+Remove-Item -Force -ErrorAction SilentlyContinue $installerSyso
+
+Push-Location $installerDir
+try {
+    & $winresExe.Source make --in winres.json --out tlan_setup --arch amd64
+    if ($LASTEXITCODE -ne 0) {
+        throw 'go-winres failed to generate installer Windows resources'
+    }
+}
+finally {
+    Pop-Location
+}
+
+Push-Location $root
+try {
+    $env:GOOS = 'windows'
+    $env:GOARCH = 'amd64'
+    $env:CGO_ENABLED = '0'
+    Remove-Item -Force -ErrorAction SilentlyContinue $installerExe
+    go build -mod=vendor -tags installer_payload -ldflags '-H windowsgui -s -w' -o $installerExe ./cmd/installer
+    if ($LASTEXITCODE -ne 0) {
+        throw 'go build ./cmd/installer failed'
+    }
+}
+finally {
+    Remove-Item Env:GOOS -ErrorAction SilentlyContinue
+    Remove-Item Env:GOARCH -ErrorAction SilentlyContinue
+    Remove-Item Env:CGO_ENABLED -ErrorAction SilentlyContinue
+    Pop-Location
+    Remove-Item -Force -ErrorAction SilentlyContinue $installerSyso
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $installerPayloadDir
+}
+
 Write-Host "Built Windows client: $exePath"
 Write-Host "Packaged ZIP: $zipPath"
+Write-Host "Built Windows installer: $installerExe"

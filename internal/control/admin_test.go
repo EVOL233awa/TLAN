@@ -568,8 +568,8 @@ func TestAdminServerDisplayAndBootstrap(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
 		t.Fatal(err)
 	}
-	if st["version"] != "1.0.0" {
-		t.Fatalf("status version = %v, want 1.0.0", st["version"])
+	if st["version"] != core.CurrentVersion {
+		t.Fatalf("status version = %v, want %s", st["version"], core.CurrentVersion)
 	}
 
 	// Verify /api/v1/frp/bootstrap works with member token.

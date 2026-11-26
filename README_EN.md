@@ -91,7 +91,29 @@ sudo systemctl restart tlan
 .\build-windows-client.ps1 -ServerURL "https://your-server.example.com:8443" -STUNAddress "your-server.example.com:3478"
 ```
 
-Outputs are created at `dist\windows\TLAN.exe` (alongside `wintun.dll`, `frpc.exe`, `tlan-icon.png`) and `dist\TLAN-client-windows-amd64.zip`.
+Outputs are generated at:
+- **Single-File Windows Installer (Recommended)**: `dist\TLAN-Setup-v1.1.0-windows-amd64.exe`
+  - Supports custom installation paths and bundles `TLAN.exe`, `wintun.dll`, and `frpc.exe` into one executable installer.
+  - Automatically registers Start Menu shortcuts (visible under **Recently Added** & the Windows **Apps list**), an optional Desktop shortcut, and a **Windows Apps & Features** uninstaller (`TLAN-Uninstall.exe`).
+  - Supports toggling **Launch at login** directly during setup.
+- **Portable Directory**: `dist\windows\TLAN.exe` (with `wintun.dll`, `frpc.exe`, `tlan-icon.png`)
+- **Portable Archive**: `dist\TLAN-client-v1.1.0-windows-amd64.zip`
+
+> **Single-Instance Activation**: Launching `TLAN.exe` while an instance is already running automatically brings the existing window to the foreground instead of opening duplicate instances.
+
+---
+
+## Versioning & Compatibility Policy (v1.1.0)
+
+TLAN uses **`Major.Minor.Patch`** semantic versioning:
+
+1. **Patch (`Major.Minor.Patch`)**: Incremented for client-only fixes or UI improvements under the same `Major.Minor` without server changes (e.g., `1.1.0` -> `1.1.1`).
+2. **Minor (`Major.Minor.0`)**: Incremented whenever server-side behavior, protocols, or APIs change (e.g., `1.0.0` -> `1.1.0`).
+3. **Major (`Major.0.0`)**: Reserved for major architectural overhauls.
+
+**Strict Compatibility Gate**:
+- Clients send `X-Client-Version` on every request and servers return `X-Server-Version`.
+- **Both `Major` and `Minor` versions must match (`client Major.Minor == server Major.Minor`)** during enrollment (`/api/v1/enroll`) and active sessions. Mismatched clients (such as `v1.0.x` connecting to a `1.1.x` server) are rejected with an upgrade prompt.
 
 ---
 

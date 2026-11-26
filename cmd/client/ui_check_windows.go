@@ -53,7 +53,7 @@ func checkDesktopUI() error {
 	if a.trayMeshAction.Enabled() || a.trayFRPAction.Enabled() {
 		return fmt.Errorf("tray actions must be disabled before credentials or FRP configuration exist")
 	}
-	if resolveCloseBehavior(false, false, true) != closeBehaviorMinimize || resolveCloseBehavior(true, false, true) != closeBehaviorTray || resolveCloseBehavior(true, true, true) != closeBehaviorExit || resolveCloseBehavior(false, true, true) != closeBehaviorExit || resolveCloseBehavior(true, false, false) != closeBehaviorMinimize {
+	if resolveCloseBehavior(false, false, true) != closeBehaviorTray || resolveCloseBehavior(true, false, true) != closeBehaviorTray || resolveCloseBehavior(true, true, true) != closeBehaviorExit || resolveCloseBehavior(false, true, true) != closeBehaviorExit || resolveCloseBehavior(false, false, false) != closeBehaviorMinimize {
 		return fmt.Errorf("close behavior policy is inconsistent")
 	}
 	wantInitial := a.window.SizeFrom96DPI(walk.Size{Width: 1020, Height: 720})
@@ -208,22 +208,33 @@ func checkDesktopUI() error {
 	if a.deviceName.Text() != "测试改名同步" {
 		return fmt.Errorf("immediate rename did not update local label: %q", a.deviceName.Text())
 	}
-	// Verify FRP quick-add composer controls declare identical height and ComboBox is themed.
+	// Verify FRP quick-add composer controls declare consistent heights (buttons are 4dp taller for 2dp inset padding) and ComboBox is themed.
 	a.applyAppearance("dark")
 	a.requestCleanRelayout()
 	pickHint := a.frpPickProcessButton.MinSizePixels()
 	addHint := a.frpQuickAddButton.MinSizePixels()
 	ipHint := a.frpQuickLocalIP.MinSizePixels()
 	protoHint := a.frpQuickProto.MinSizePixels()
-	if pickHint.Height != addHint.Height || pickHint.Height != ipHint.Height || protoHint.Height != ipHint.Height {
+	if pickHint.Height != addHint.Height || protoHint.Height != ipHint.Height {
 		return fmt.Errorf("FRP composer height constraint mismatch: pick=%d add=%d ip=%d proto=%d", pickHint.Height, addHint.Height, ipHint.Height, protoHint.Height)
 	}
 	pickB := a.frpPickProcessButton.BoundsPixels()
 	addB := a.frpQuickAddButton.BoundsPixels()
 	ipB := a.frpQuickLocalIP.BoundsPixels()
 	protoB := a.frpQuickProto.BoundsPixels()
-	if ipB.Height > 0 && (pickB.Height != addB.Height || pickB.Height != ipB.Height || protoB.Height != ipB.Height) {
+	if ipB.Height > 0 && (pickB.Height != addB.Height || protoB.Height != ipB.Height) {
 		return fmt.Errorf("FRP composer height mismatch: pick=%d add=%d ip=%d proto=%d", pickB.Height, addB.Height, ipB.Height, protoB.Height)
+	}
+	if ipB.Height > 0 {
+		ipMid2 := ipB.Y*2 + ipB.Height
+		pickMid2 := pickB.Y*2 + pickB.Height
+		addMid2 := addB.Y*2 + addB.Height
+		if d := pickMid2 - ipMid2; d < -2 || d > 2 {
+			return fmt.Errorf("FRP composer vertical centerline mismatch: pick=%d+h%d ip=%d+h%d", pickB.Y, pickB.Height, ipB.Y, ipB.Height)
+		}
+		if d := addMid2 - ipMid2; d < -2 || d > 2 {
+			return fmt.Errorf("FRP composer vertical centerline mismatch: add=%d+h%d ip=%d+h%d", addB.Y, addB.Height, ipB.Y, ipB.Height)
+		}
 	}
 	if a.frpQuickProto.Text() != "TCP" {
 		return fmt.Errorf("FRP protocol ComboBox initial text = %q", a.frpQuickProto.Text())
@@ -281,7 +292,7 @@ func checkDesktopUI() error {
 	}
 	a.admin.busy = true
 	a.showPage(pageAdmin)
-	a.admin.apply(clientapi.AdminOverview{Service: "tlan-control", Version: "1.0.0", Stage: "admin-ui-smoke", Network: clientapi.Network{Name: "私人网络", CIDR: "10.77.0.0/24"}, MemberCount: 3, OnlineCount: 2, BlockedCount: 1, RelayStatus: "enabled", RelaySessions: 1, FRPStatus: "managed", FRPLeaseCount: 1, FRPPortStart: 60000, FRPPortEnd: 61000, ServerDisplay: clientapi.ServerDisplayConfig{Mode: "ip"}}, clientapi.AdminMembers{Members: []clientapi.AdminMember{{ID: "dev-ui-smoke", Name: "UI Check", VirtualIP: "10.77.0.2", Online: true}, {ID: "dev-ui-friend", Name: "Friend-PC", VirtualIP: "10.77.0.3", Online: true, RelayCount: 1}, {ID: "dev-ui-blocked", Name: "Blocked-PC", VirtualIP: "10.77.0.4", Blocked: true}}}, nil)
+	a.admin.apply(clientapi.AdminOverview{Service: "tlan-control", Version: "1.1.0", Stage: "admin-ui-smoke", Network: clientapi.Network{Name: "私人网络", CIDR: "10.77.0.0/24"}, MemberCount: 3, OnlineCount: 2, BlockedCount: 1, RelayStatus: "enabled", RelaySessions: 1, FRPStatus: "managed", FRPLeaseCount: 1, FRPPortStart: 60000, FRPPortEnd: 61000, ServerDisplay: clientapi.ServerDisplayConfig{Mode: "ip"}}, clientapi.AdminMembers{Members: []clientapi.AdminMember{{ID: "dev-ui-smoke", Name: "UI Check", VirtualIP: "10.77.0.2", Online: true}, {ID: "dev-ui-friend", Name: "Friend-PC", VirtualIP: "10.77.0.3", Online: true, RelayCount: 1}, {ID: "dev-ui-blocked", Name: "Blocked-PC", VirtualIP: "10.77.0.4", Blocked: true}}}, nil)
 	a.admin.setBusy(false)
 	a.requestCleanRelayout()
 	if overviewContainer, ok := a.admin.page.Children().At(0).(walk.Container); ok {
@@ -428,8 +439,15 @@ func checkDesktopUI() error {
 	closeHandle := a.window.Closing().Attach(a.handleWindowClosing)
 	a.window.SendMessage(win.WM_CLOSE, 0, 0)
 	a.window.Closing().Detach(closeHandle)
-	if a.window.IsDisposed() || a.closing.Load() || !win.IsIconic(a.window.Handle()) {
-		return fmt.Errorf("WM_CLOSE did not minimize main window without closing (disposed=%v closing=%v iconic=%v)", a.window.IsDisposed(), a.closing.Load(), win.IsIconic(a.window.Handle()))
+	if a.window.IsDisposed() || a.closing.Load() {
+		return fmt.Errorf("WM_CLOSE unexpectedly closed main window (disposed=%v closing=%v)", a.window.IsDisposed(), a.closing.Load())
+	}
+	if a.trayAvailable() {
+		if win.IsWindowVisible(a.window.Handle()) {
+			return fmt.Errorf("WM_CLOSE did not hide main window to tray (visible=true)")
+		}
+	} else if !win.IsIconic(a.window.Handle()) {
+		return fmt.Errorf("WM_CLOSE did not fall back to minimizing main window (iconic=false)")
 	}
 	return c.err
 }
@@ -477,7 +495,8 @@ func runUIPreview(mode string) {
 		{"TABLE-PC", "10.77.0.5", "离线", "—", "—"},
 	})
 	a.memberCount.SetText("2 / 4 在线")
-	a.traffic.SetText("上传 ↑ 1.8 MB   下载 ↓ 6.4 MB")
+	a.trafficUp.SetText(formatTrafficLine(true, 184*1024, 1887436))
+	a.trafficDown.SetText(formatTrafficLine(false, 655*1024, 6710886))
 	a.peers.SetVisible(true)
 	a.setEmptyState(false, "")
 	if a.serverProbe != nil {
@@ -548,7 +567,7 @@ func runUIPreview(mode string) {
 		a.setAdminMode(true, "test-admin-token")
 		a.admin.busy = true
 		a.showPage(pageAdmin)
-		a.admin.apply(clientapi.AdminOverview{Service: "tlan-control", Version: "1.0.0", Stage: "admin-console", ControlListen: "0.0.0.0:8080 / TLS", AdminListen: "127.0.0.1:8081", Network: clientapi.Network{Name: "朋友们的私人网络", CIDR: "10.77.0.0/24"}, MemberCount: 5, OnlineCount: 3, BlockedCount: 1, RelayStatus: "enabled", RelaySessions: 2, FRPStatus: "managed", FRPLeaseCount: 4, FRPPortStart: 60000, FRPPortEnd: 61000, ServerDisplay: clientapi.ServerDisplayConfig{Mode: "ip"}}, clientapi.AdminMembers{Members: []clientapi.AdminMember{
+		a.admin.apply(clientapi.AdminOverview{Service: "tlan-control", Version: "1.1.0", Stage: "admin-console", ControlListen: "0.0.0.0:8080 / TLS", AdminListen: "127.0.0.1:8081", Network: clientapi.Network{Name: "朋友们的私人网络", CIDR: "10.77.0.0/24"}, MemberCount: 5, OnlineCount: 3, BlockedCount: 1, RelayStatus: "enabled", RelaySessions: 2, FRPStatus: "managed", FRPLeaseCount: 4, FRPPortStart: 60000, FRPPortEnd: 61000, ServerDisplay: clientapi.ServerDisplayConfig{Mode: "ip"}}, clientapi.AdminMembers{Members: []clientapi.AdminMember{
 			{ID: "dev-tlan-pc", Name: "TLAN-PC", VirtualIP: "10.77.0.2", Online: true, RelayCount: 1, FRPLeases: 2},
 			{ID: "dev-alice", Name: "DESKTOP-ALICE", VirtualIP: "10.77.0.3", Online: true, RelayCount: 1, FRPLeases: 1},
 			{ID: "dev-bob", Name: "LAPTOP-BOB", VirtualIP: "10.77.0.4", Online: false, RelayCount: 0, FRPLeases: 0},

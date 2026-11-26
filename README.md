@@ -110,8 +110,28 @@ sudo systemctl restart tlan
 ```
 
 构建产物位于：
-- 可执行目录：`dist/windows/TLAN.exe`（附带 `wintun.dll`、`frpc.exe`、`tlan-icon.png`）
-- 压缩发布包：`dist/TLAN-client-windows-amd64.zip`
+- 单文件 Windows 安装包（推荐）：`dist/TLAN-Setup-v1.1.0-windows-amd64.exe`
+  - 支持自定义安装目录，自动将 `TLAN.exe` 与 `wintun.dll`、`frpc.exe` 整合安装
+  - 自动创建开始菜单快捷方式（出现在 Windows 开始菜单 **最近添加** 与 **所有应用列表**）及系统 **应用和功能** 卸载项（`TLAN-Uninstall.exe`）
+  - 安装过程可直接勾选 **开机自动启动**，与客户端设置保持同步
+- 绿色免安装目录：`dist/windows/TLAN.exe`（附带 `wintun.dll`、`frpc.exe`、`tlan-icon.png`）
+- 绿色压缩发布包：`dist/TLAN-client-v1.1.0-windows-amd64.zip`
+
+> **单实例机制**：当 TLAN 已在后台或托盘运行时，再次双击启动 `TLAN.exe` 会自动唤起并前置已有窗口，不会重复打开多个实例。
+
+---
+
+## 版本管理与兼容校验规则（v1.1.0）
+
+TLAN 采用 **`大版本.中版本.小版本`（`Major.Minor.Patch`）** 三段式版本号规范：
+
+1. **小版本（`Patch`）**：仅针对客户端进行同中大版本修复、界面或体验优化，且未修改服务端通信/逻辑时递增（例如 `1.1.0` -> `1.1.1`）。
+2. **中版本（`Minor`）**：只要修改了服务端功能或接口行为，即递增中版本号（例如 `1.0.0` -> `1.1.0`）。
+3. **大版本（`Major`）**：发生重大架构重构或跨代更新时递增大版本号（例如 `1.x.y` -> `2.0.0`）。
+
+**强制版本对齐机制**：
+- 客户端每次请求会在请求头携带 `X-Client-Version`，服务端在所有响应头返回 `X-Server-Version` 并在登录（`/api/v1/enroll`）及成员会话请求阶段校验双方版本号。
+- **只有客户端与服务端的大版本号和中版本号（`Major.Minor`）完全一致时才允许登录与连接**（例如 `v1.1.x` 客户端仅可登录 `1.1.y` 服务端；`v1.0.x` 与 `1.1.x` 之间将直接拦截登录并提示升级）。
 
 ### 3. 客户端加入与使用
 

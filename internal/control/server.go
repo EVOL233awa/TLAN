@@ -36,7 +36,9 @@ type Server struct {
 	AdminTLS            bool
 	// MinClientVersion is the oldest release client the server still serves.
 	// Empty disables the gate; beta builds are never gated.
-	MinClientVersion string
+	MinClientVersion       string
+	ServerVersion          string
+	RequireMajorMinorMatch bool
 	DataDirSummary   string
 	Relay            *network.RelayBroker
 	FRP              *frpauth.Store
@@ -88,8 +90,15 @@ func (s *Server) adminTokenMatches(token string) bool {
 	return adminTokenMatches(token, s.AdminToken)
 }
 
+func (s *Server) writeVersionHeader(w http.ResponseWriter) {
+	if s != nil && (s.RequireMajorMinorMatch || strings.TrimSpace(s.ServerVersion) != "") {
+		w.Header().Set(serverVersionHeader, s.currentVersion())
+	}
+}
+
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.writeVersionHeader(w)
 		if r.URL.Path == "/health" || r.URL.Path == "/api/v1/enroll" {
 			next.ServeHTTP(w, r)
 			return
@@ -119,8 +128,15 @@ func (s *Server) auth(next http.Handler) http.Handler {
 			return
 		}
 		if credential, ok := s.Store.AuthenticateMember(token); ok && (frpRouteAllowed(r) || memberRouteAllowed(r, credential)) {
-			if reported := strings.TrimSpace(r.Header.Get(clientVersionHeader)); reported != "" {
+			reported := strings.TrimSpace(r.Header.Get(clientVersionHeader))
+			if reported != "" {
 				_ = s.Store.SetClientVersion(core.DeviceID(credential.DeviceID), reported)
+			} else if stored, ok := s.Store.ClientVersion(core.DeviceID(credential.DeviceID)); ok {
+				reported = stored
+			}
+			if err := s.checkMajorMinor(reported); err != nil {
+				writeError(w, http.StatusUpgradeRequired, err.Error())
+				return
 			}
 			if err := s.clientVersionAllowed(credential); err != nil {
 				writeError(w, http.StatusUpgradeRequired, err.Error())
@@ -142,7 +158,7 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"service":    "tlan-control",
-		"version":    "1.0.0",
+		"version":    s.currentVersion(),
 		"stage":      "encrypted-ipv4-mesh",
 		"networks":   len(s.Store.ListNetworks()),
 		"data_plane": "wireguard-go + Wintun/Linux TUN; IPv4 encapsulation",

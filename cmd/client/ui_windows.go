@@ -11,6 +11,7 @@ import (
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
 	"github.com/lxn/win"
+	"github.com/private-radminlan/lanmesh/core"
 	"github.com/private-radminlan/lanmesh/internal/clientapi"
 	"github.com/private-radminlan/lanmesh/internal/clientui"
 )
@@ -52,7 +53,7 @@ const (
 const (
 	appName     = "TLAN"
 	windowTitle = "TLAN"
-	appVersion  = "v1.0.0"
+	appVersion  = core.CurrentVersionTag
 )
 
 type desktopTableModel struct {
@@ -75,20 +76,20 @@ func (m *desktopTableModel) Value(r, c int) interface{} {
 	return value
 }
 func (m *desktopTableModel) setRows(rows [][]string) {
-	equal := len(rows) == len(m.rows)
-	if equal {
+	if len(rows) == len(m.rows) {
 		for i := range rows {
 			if strings.Join(rows[i], "\x00") != strings.Join(m.rows[i], "\x00") {
-				equal = false
-				break
+				m.rows[i] = rows[i]
+				m.PublishRowChanged(i)
 			}
 		}
-	}
-	if equal {
 		return
 	}
 	m.rows = rows
 	m.PublishRowsReset()
+	if len(rows) > 0 {
+		m.PublishRowsChanged(0, len(rows)-1)
+	}
 }
 
 func caption(text string) Label {
@@ -326,13 +327,16 @@ func (a *desktop) build() error {
 		}},
 	})
 
-	localTrafficCard := subCard(Margins{Left: 14, Top: 8, Right: 12, Bottom: 9}, 4, []Widget{
+	localTrafficCard := subCard(Margins{Left: 14, Top: 8, Right: 12, Bottom: 8}, 3, []Widget{
 		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{MarginsZero: true}, Children: []Widget{
-			Label{AssignTo: &powerTrafficLabel, Text: tr("上传与下载", "Traffic"), TextColor: uiMuted, Font: uiFont(8, false), NoPrefix: true},
+			Label{AssignTo: &powerTrafficLabel, Text: tr("上传与下载（速率 · 累计）", "Traffic (Rate · Total)"), TextColor: uiMuted, Font: uiFont(8, false), NoPrefix: true},
 			HSpacer{},
 		}},
 		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{MarginsZero: true, Spacing: 0}, Children: []Widget{
-			Label{AssignTo: &a.traffic, Text: formatTrafficSummary(0, 0), TextColor: uiInk, Font: uiMonoFont(10, true), TextAlignment: AlignCenter, NoPrefix: true, EllipsisMode: EllipsisEnd, StretchFactor: 1},
+			Label{AssignTo: &a.trafficUp, Text: formatTrafficLine(true, 0, 0), TextColor: uiInk, Font: uiMonoFont(9, true), TextAlignment: AlignNear, NoPrefix: true, EllipsisMode: EllipsisEnd, StretchFactor: 1},
+		}},
+		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{MarginsZero: true, Spacing: 0}, Children: []Widget{
+			Label{AssignTo: &a.trafficDown, Text: formatTrafficLine(false, 0, 0), TextColor: uiInk, Font: uiMonoFont(9, true), TextAlignment: AlignNear, NoPrefix: true, EllipsisMode: EllipsisEnd, StretchFactor: 1},
 		}},
 	})
 
@@ -566,6 +570,9 @@ func (a *desktop) build() error {
 		icon.Dispose()
 		return err
 	}
+	if a.joinBlueprint != nil {
+		a.joinBlueprint.SetPaintMode(walk.PaintNoErase)
+	}
 
 	a.onLang(func() {
 		if a.window != nil && !a.window.IsDisposed() {
@@ -631,7 +638,7 @@ func (a *desktop) build() error {
 			_ = powerUserLabel.SetText(tr("当前用户名", "Username"))
 		}
 		if powerTrafficLabel != nil {
-			_ = powerTrafficLabel.SetText(tr("上传与下载", "Traffic"))
+			_ = powerTrafficLabel.SetText(tr("上传与下载（速率 · 累计）", "Traffic (Rate · Total)"))
 		}
 		if a.serverDisplayTitle != nil {
 			_ = a.serverDisplayTitle.SetText(tr("当前连接服务器", "Connected Server"))
@@ -671,8 +678,9 @@ func (a *desktop) build() error {
 			applyNavButtonSize(a.railFRP, "frp")
 			_ = a.railFRP.Invalidate()
 		}
-		if a.traffic != nil && a.engine == nil {
-			_ = a.traffic.SetText(formatTrafficSummary(0, 0))
+		if a.engine == nil {
+			setLabelIfChanged(a.trafficUp, formatTrafficLine(true, 0, 0))
+			setLabelIfChanged(a.trafficDown, formatTrafficLine(false, 0, 0))
 		}
 		if a.railAdmin != nil {
 			_ = a.railAdmin.SetText(tr("管理面板", "Admin Panel"))
@@ -942,7 +950,7 @@ func (a *desktop) stepAnimLoop() {
 	case pageJoin:
 		a.animPhase = math.Mod(a.animPhase+0.0085, 1.0)
 		if a.joinBlueprint != nil && !a.joinBlueprint.IsDisposed() {
-			_ = a.joinBlueprint.Invalidate()
+			win.InvalidateRect(a.joinBlueprint.Handle(), nil, false)
 		}
 		keepRunning = true
 	case pagePower:
@@ -985,7 +993,7 @@ func (a *desktop) stepAnimLoop() {
 			}
 			a.animPhase = math.Mod(a.animPhase+step, 1.0)
 			if a.powerVisual != nil && !a.powerVisual.IsDisposed() {
-				_ = a.powerVisual.Invalidate()
+				win.InvalidateRect(a.powerVisual.Handle(), nil, false)
 			}
 			keepRunning = true
 		}

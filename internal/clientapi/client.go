@@ -343,6 +343,11 @@ func (c *Client) doRequest(ctx context.Context, httpClient *http.Client, method,
 		return &networkRequestError{err: err}
 	}
 	defer resp.Body.Close()
+	if serverVer := strings.TrimSpace(resp.Header.Get("X-Server-Version")); serverVer != "" && strings.TrimSpace(c.AgentVersion) != "" {
+		if err := core.MajorMinorCompatible(serverVer, c.AgentVersion); err != nil {
+			return err
+		}
+	}
 	var envelope struct {
 		Error string `json:"error"`
 	}

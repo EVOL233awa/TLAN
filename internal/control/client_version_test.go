@@ -94,3 +94,55 @@ func TestServerRefusesOutdatedClients(t *testing.T) {
 		t.Fatalf("gate rejected a beta client: %v", err)
 	}
 }
+
+func TestServerMajorMinorCompatibility(t *testing.T) {
+	store, err := storage.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.EnsurePrivateNetwork("Friends", "friends-secret-code", "10.245.0.0/24"); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer((&Server{
+		Store:                  store,
+		AdminToken:             "admin-only",
+		ServerVersion:          "1.1.0",
+		RequireMajorMinorMatch: true,
+	}).Handler())
+	defer server.Close()
+
+	// Unreported or mismatched major.minor version cannot enroll.
+	for _, badVer := range []string{"", "v1.0.0", "1.2.0", "v2.1.0"} {
+		id, err := clientidentity.LoadOrCreate(filepath.Join(t.TempDir(), "id.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		api := clientapi.New(server.URL, "")
+		api.AgentVersion = badVer
+		if _, err := api.Enroll("friends-secret-code", id.RegisterRequest(), id.PrivateKey); err == nil {
+			t.Fatalf("Enroll succeeded for mismatched version %q, want rejection", badVer)
+		}
+	}
+
+	// Same Major.Minor with different patch version succeeds for both enroll and subsequent calls.
+	id, err := clientidentity.LoadOrCreate(filepath.Join(t.TempDir(), "id-ok.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := clientapi.New(server.URL, "")
+	api.AgentVersion = "v1.1.5"
+	m, err := api.Enroll("friends-secret-code", id.RegisterRequest(), id.PrivateKey)
+	if err != nil {
+		t.Fatalf("Enroll failed for compatible version: %v", err)
+	}
+	api.Token = m.Token
+	if _, err := api.Heartbeat(core.DeviceID(m.Member.ID)); err != nil {
+		t.Fatalf("Heartbeat failed for compatible version: %v", err)
+	}
+
+	// If client later downgrades to 1.0.0, member requests are rejected.
+	api.AgentVersion = "v1.0.0"
+	if _, err := api.Heartbeat(core.DeviceID(m.Member.ID)); err == nil {
+		t.Fatal("expected Heartbeat rejection for v1.0.0 client against 1.1.0 server")
+	}
+}

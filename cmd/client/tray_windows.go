@@ -19,13 +19,14 @@ const (
 )
 
 // resolveCloseBehavior keeps the client running in the background when the user
-// closes the window: hide to tray if configured and available, otherwise
-// minimize to the taskbar unless an explicit exit was requested.
-func resolveCloseBehavior(closeToTray, explicitExit, trayAvailable bool) closeBehavior {
+// closes the window. Tray residency is the default; the legacy setting remains
+// supported. If the notification area is unavailable, fall back to the taskbar
+// unless an explicit exit was requested.
+func resolveCloseBehavior(_, explicitExit, trayAvailable bool) closeBehavior {
 	if explicitExit {
 		return closeBehaviorExit
 	}
-	if closeToTray && trayAvailable {
+	if trayAvailable {
 		return closeBehaviorTray
 	}
 	return closeBehaviorMinimize
@@ -231,6 +232,7 @@ func (a *desktop) showWindow() {
 	}
 	win.ShowWindow(a.window.Handle(), win.SW_RESTORE)
 	a.window.Show()
+	win.SetForegroundWindow(a.window.Handle())
 	_ = a.window.Activate()
 	a.requestCleanRelayout()
 	a.ensureAnimLoop()

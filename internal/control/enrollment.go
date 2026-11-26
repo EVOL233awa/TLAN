@@ -84,8 +84,14 @@ func (s *Server) allowEnrollment(r *http.Request) bool {
 }
 func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	s.writeVersionHeader(w)
 	if r.Method != http.MethodPost {
 		writeError(w, 405, "method not allowed")
+		return
+	}
+	reportedVersion := strings.TrimSpace(r.Header.Get(clientVersionHeader))
+	if err := s.checkMajorMinor(reportedVersion); err != nil {
+		writeError(w, http.StatusUpgradeRequired, err.Error())
 		return
 	}
 	if !s.allowEnrollment(r) {
@@ -140,6 +146,9 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, status, err.Error())
 		return
+	}
+	if reportedVersion != "" {
+		_ = s.Store.SetClientVersion(core.DeviceID(member.ID), reportedVersion)
 	}
 	serverDisplay := storage.DefaultServerDisplay
 	if s.Store != nil {
